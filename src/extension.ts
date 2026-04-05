@@ -96,39 +96,6 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(disposable);
     log('Command registered: multipost.logoutWeChat');
 
-    // Chrome CDP Fully Automated Upload - login if needed then upload current file
-    disposable = vscode.commands.registerCommand(
-      'multipost.loginWeChatChromeCdp',
-      async () => {
-        log('Command invoked: multipost.loginWeChatChromeCdp (Fully Automated CDP Upload)');
-
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-          vscode.window.showErrorMessage('No active editor');
-          log('Error: No active editor', 'error');
-          return;
-        }
-
-        const markdown = editor.document.getText();
-        const fileName = editor.document.fileName;
-        const title = extractTitle(markdown) || fileName.split('/').pop()?.replace(/\.md$/, '') || 'Untitled';
-        log(`Extracted title: "${title}", markdown length: ${markdown.length} characters`);
-
-        await vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: 'Starting Chrome CDP automated upload...',
-            cancellable: false,
-          },
-          async (progress) => {
-            await handleCdpFullAutomatedUpload(markdown, title, progress);
-          }
-        );
-      }
-    );
-    context.subscriptions.push(disposable);
-    log('Command registered: multipost.loginWeChatChromeCdp (Fully Automated CDP Upload)');
-
     disposable = vscode.commands.registerCommand(
       'multipost.uploadToWeChat',
       async () => {

@@ -54,10 +54,6 @@
         }
       },
       {
-        "command": "multipost.loginWeChatChromeCdp",
-        "title": "CDP Fully Automated Upload"
-      },
-      {
         "command": "multipost.logoutWeChat",
         "title": "Logout MultiPost"
       }

@@ -129,8 +129,8 @@ describe('extension', () => {
 
   it('should activate without error', async () => {
     await expect(activate(mockContext)).resolves.not.toThrow();
-    expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(4);
-    expect(mockContext.subscriptions).toHaveLength(5);
+    expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(3);
+    expect(mockContext.subscriptions).toHaveLength(4);
   });
 
   it('should deactivate without error', () => {
@@ -168,56 +168,6 @@ describe('extension', () => {
     registeredCommands.get('multipost.preview')!();
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('No active editor');
-  });
-
-  it('should show error when chrome cdp command runs without active editor', async () => {
-    await activate(mockContext);
-
-    await registeredCommands.get('multipost.loginWeChatChromeCdp')!();
-
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('No active editor');
-  });
-
-  it('should run chrome cdp command with saved auth cookies', async () => {
-    await activate(mockContext);
-    const report = jest.fn();
-    (vscode.window.withProgress as jest.Mock).mockImplementation((_, task) => task({ report }));
-    (vscode.window as any).activeTextEditor = {
-      document: {
-        getText: () => '# Title',
-        fileName: '/tmp/demo.md',
-      },
-    };
-    mockWeChatService.getAuthInfo.mockReturnValue({
-      nickName: 'Tester',
-      cookies: [{ name: 'token', value: 'x', domain: '.mp.weixin.qq.com', path: '/' }],
-    });
-    mockChromeCdpService.startAuthenticatedSession.mockResolvedValue(undefined);
-    mockChromeCdpService.createDraftInBrowser.mockResolvedValue('https://example.com/browser-draft');
-
-    await registeredCommands.get('multipost.loginWeChatChromeCdp')!();
-
-    expect(mockChromeCdpService.startAuthenticatedSession).toHaveBeenCalled();
-    expect(mockChromeCdpService.createDraftInBrowser).toHaveBeenCalled();
-    expect(report).toHaveBeenCalled();
-  });
-
-  it('should stop cdp flow when login validation fails', async () => {
-    await activate(mockContext);
-    (vscode.window as any).activeTextEditor = {
-      document: {
-        getText: () => '# Title',
-        fileName: '/tmp/demo.md',
-      },
-    };
-    mockWeChatService.getAuthInfo.mockReturnValue(null);
-    mockChromeCdpService.isSessionActive.mockReturnValue(false);
-    mockChromeCdpService.startFirstTimeLogin.mockResolvedValue([{ name: 'token', value: 'x', domain: '.mp.weixin.qq.com', path: '/' }]);
-    mockWeChatService.checkAuthWithCookies.mockResolvedValue({ isAuthenticated: false });
-
-    await registeredCommands.get('multipost.loginWeChatChromeCdp')!();
-
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Login failed. Please try again.');
   });
 
   it('should show error when upload runs without active editor', async () => {
@@ -311,7 +261,7 @@ describe('extension', () => {
     mockChromeCdpService.isSessionActive.mockReturnValue(true);
     mockChromeCdpService.createDraftInBrowser.mockResolvedValue('https://example.com/browser-draft');
 
-    await registeredCommands.get('multipost.loginWeChatChromeCdp')!();
+    await registeredCommands.get('multipost.uploadToWeChat')!();
 
     expect(mockChromeCdpService.startFirstTimeLogin).not.toHaveBeenCalled();
     expect(mockChromeCdpService.createDraftInBrowser).toHaveBeenCalled();
