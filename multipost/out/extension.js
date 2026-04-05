@@ -32,9 +32,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 exports.deactivate = deactivate;
@@ -42,13 +39,8 @@ const vscode = __importStar(require("vscode"));
 const WeChatService_1 = require("./services/WeChatService");
 const PreviewService_1 = require("./services/PreviewService");
 const SettingsService_1 = require("./services/SettingsService");
-const unified_1 = require("unified");
-const remark_parse_1 = __importDefault(require("remark-parse"));
-const remark_gfm_1 = __importDefault(require("remark-gfm"));
-const remark_rehype_1 = __importDefault(require("remark-rehype"));
-const rehype_highlight_1 = __importDefault(require("rehype-highlight"));
-const rehype_stringify_1 = __importDefault(require("rehype-stringify"));
-const mermaidRenderer_1 = require("./utils/mermaidRenderer");
+const extractTitle_1 = require("./utils/extractTitle");
+const processMarkdown_1 = require("./utils/processMarkdown");
 let weChatService;
 let previewService;
 let settingsService;
@@ -138,14 +130,14 @@ async function activate(context) {
             }
             const markdown = editor.document.getText();
             const fileName = editor.document.fileName;
-            const title = extractTitle(markdown) || fileName.split('/').pop()?.replace(/\.md$/, '') || 'Untitled';
+            const title = (0, extractTitle_1.extractTitle)(markdown) || fileName.split('/').pop()?.replace(/\.md$/, '') || 'Untitled';
             await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
                 title: 'Uploading to WeChat...',
                 cancellable: false,
             }, async () => {
                 try {
-                    const { html, errors } = await processMarkdownForUpload(markdown);
+                    const { html, errors } = await (0, processMarkdown_1.processMarkdownForUpload)(markdown, weChatService);
                     if (errors.length > 0) {
                         vscode.window.showWarningMessage(`Upload completed with ${errors.length} errors: ${errors[0]}`);
                     }
@@ -191,48 +183,6 @@ async function activate(context) {
 function updatePreviewAuthStatus() {
     const authInfo = weChatService.getAuthInfo();
     previewService.updateAuthStatus(!!authInfo, authInfo?.nickName);
-}
-function extractTitle(markdown) {
-    const match = markdown.match(/^#\s+(.+)$/m);
-    return match ? match[1].trim() : null;
-}
-async function processMarkdownForUpload(markdown) {
-    const errors = [];
-    // Process mermaid blocks before unified processing
-    const processedMarkdown = await processMermaidBlocks(markdown, errors);
-    const processor = (0, unified_1.unified)()
-        .use(remark_parse_1.default)
-        .use(remark_gfm_1.default)
-        .use(remark_rehype_1.default)
-        .use(rehype_highlight_1.default)
-        .use(rehype_stringify_1.default);
-    const file = await processor.process(processedMarkdown);
-    const html = String(file);
-    return { html, errors };
-}
-async function processMermaidBlocks(markdown, errors) {
-    // Find all mermaid code blocks
-    const mermaidRegex = /```mermaid\s*\n([\s\S]*?)\n```/g;
-    let processed = markdown;
-    let match;
-    while ((match = mermaidRegex.exec(markdown)) !== null) {
-        const mermaidCode = match[1];
-        try {
-            const buffer = await (0, mermaidRenderer_1.renderMermaidToBuffer)(mermaidCode);
-            const result = await weChatService.uploadImage(buffer, `mermaid-${Date.now()}.png`);
-            if (result.success && result.cdnUrl) {
-                // Replace code block with image
-                processed = processed.replace(match[0], `![Mermaid diagram](${result.cdnUrl})`);
-            }
-            else {
-                errors.push(`Failed to upload Mermaid diagram: ${result.error}`);
-            }
-        }
-        catch (error) {
-            errors.push(`Failed to render Mermaid diagram: ${error.message}`);
-        }
-    }
-    return processed;
 }
 function deactivate() { }
 //# sourceMappingURL=extension.js.map

@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.1.4 (2026-04-05)
+
+- ✅ Add complete test coverage
+- 🧪 Added tests for all modules: WeChatService, PreviewService, SettingsService, all utilities
+- 📊 Achieve 82.65% overall test coverage (meets ≥ 80% requirement)
+- ♻️ Refactored: extracted `processMarkdown` functions from extension.ts to standalone `processMarkdown.ts` for better testability
+- ✨ All 43 tests pass
+- 🏷️ Bump version to 0.1.4
+
 ## 0.1.3 (2026-04-05)
 
 - 🐛 Fix: missing dependencies in VSIX package
