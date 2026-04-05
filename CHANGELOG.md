@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.1.12 (2026-04-05)
+
+- 🐛 Fix: failed to extract token after login - regex matched wrong position
+- 🔧 Make token extraction more robust - try multiple regex patterns
+- 📝 Increase HTML preview length for better debugging
+- 🏷️ Bump version to 0.1.12
+
 ## 0.1.11 (2026-04-05)
 
 - 🐛 Fix: WeChat login QR code fails to load - WeChat blocks page embedding in iframe
