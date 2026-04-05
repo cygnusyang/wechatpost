@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.1.5 (2026-04-05)
+
+- 🐛 Fix: command not found when invoking command before opening markdown file
+- VS Code automatically activates extension when any command is invoked from command palette
+- 👍 canvas with all native libraries included in VSIX for macOS
+- 🏷️ Bump version to 0.1.5
+
 ## 0.1.4 (2026-04-05)
 
 - ✅ Add complete test coverage

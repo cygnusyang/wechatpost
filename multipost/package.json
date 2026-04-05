@@ -2,7 +2,7 @@
   "name": "multipost",
   "displayName": "MultiPost - WeChat Publisher",
   "description": "Publish Markdown directly to WeChat Official Accounts from VSCode",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "cygnus",
   "engines": {
     "vscode": "^1.80.0"
@@ -12,7 +12,11 @@
     "Markdown"
   ],
   "activationEvents": [
-    "onLanguage:markdown"
+    "onLanguage:markdown",
+    "onCommand:wechat-publisher.preview",
+    "onCommand:wechat-publisher.loginWeChat",
+    "onCommand:wechat-publisher.logoutWeChat",
+    "onCommand:wechat-publisher.uploadToWeChat"
   ],
   "main": "./out/extension.js",
   "contributes": {
