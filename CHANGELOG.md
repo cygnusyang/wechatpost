@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.1.10 (2026-04-05)
+
+- 🐛 Fix: ESM compatibility issue - node-fetch@3 is ESM-only, incompatible with VSCode extension CommonJS
+- Downgraded to node-fetch@2 which supports CommonJS
+- This should fix the "Error: require() of ES Module" failure during activation
+- 🏷️ Bump version to 0.1.10
+
 ## 0.1.9 (2026-04-05)
 
 - 🐛 Fix: `Cannot find module 'node-fetch'` - add missing runtime dependencies to dependencies
