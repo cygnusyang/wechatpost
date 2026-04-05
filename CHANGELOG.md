@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.5.1 (2026-04-05)
+
+- ✨ **Complete CDP-based workflow**: Both login AND publish now happen in Chrome via CDP automation
+- 🔄 **Auto cookie injection**: If you've logged in before, saved cookies are automatically injected into Chrome - you don't need to scan QR code every time!
+- 🤖 **Fully browser-based automation**: Chrome stays open after login, publishing is done automatically in the browser
+- 👍 Still keeps **Manual Cookie Input** with API upload as alternative option
+- 🔒 Credentials are still saved securely in VSCode Secret Storage
+
 ## 0.4.0 (2026-04-05)
 
 - 🧹 Cleanup: **Remove broken webview login** - the old webview-based automatic login couldn't display QR code correctly because WeChat blocks embedding in iframes, so it's removed now

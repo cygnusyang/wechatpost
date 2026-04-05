@@ -1,8 +1,10 @@
-// ChromeCDPService - Uses Puppeteer (CDP) to automate Chrome browser for WeChat login
-// Launches external Chrome, lets user scan QR code, extracts cookies automatically
+// ChromeCDPService - Uses Puppeteer (CDP) to automate Chrome browser for WeChat login and publishing
+// Launches external Chrome, supports:
+// 1. First-time login: user scans QR, extract cookies automatically
+// 2. Authenticated session: inject existing cookies, keep browser open for automated publishing
 
 import puppeteer from 'puppeteer';
-import type { Page } from 'puppeteer';
+import type { Browser, Page, CookieParam } from 'puppeteer';
 import * as vscode from 'vscode';
 
 const LOGIN_TIMEOUT_MS = 120000; // 2 minutes timeout for user to scan QR
@@ -10,6 +12,8 @@ const POLL_INTERVAL_MS = 2000; // Check every 2 seconds for login completion
 
 export class ChromeCDPService {
   private outputChannel: vscode.OutputChannel;
+  private browser: Browser | null = null;
+  private authenticatedPage: Page | null = null;
 
   constructor(outputChannel: vscode.OutputChannel) {
     this.outputChannel = outputChannel;
@@ -17,7 +21,7 @@ export class ChromeCDPService {
 
   private log(message: string, level: 'info' | 'error' = 'info'): void {
     const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] [CDP Login] [${level.toUpperCase()}] ${message}`;
+    const logMessage = `[${timestamp}] [CDP] [${level.toUpperCase()}] ${message}`;
     this.outputChannel.appendLine(logMessage);
     if (level === 'error') {
       console.error(logMessage);
@@ -27,11 +31,11 @@ export class ChromeCDPService {
   }
 
   /**
-   * Start the Chrome CDP login flow
+   * First-time login flow - launch Chrome, let user scan QR, extract cookies
    * @returns Array of cookie strings in format "name=value"
    */
-  async startLoginFlow(): Promise<string[]> {
-    this.log('Starting Chrome CDP login flow');
+  async startFirstTimeLogin(): Promise<string[]> {
+    this.log('Starting first-time login flow');
 
     const browser = await puppeteer.launch({
       headless: false,
@@ -43,7 +47,7 @@ export class ChromeCDPService {
       ],
     });
 
-    this.log('Chrome browser launched');
+    this.browser = browser;
 
     try {
       const page = await browser.newPage();
@@ -61,33 +65,225 @@ export class ChromeCDPService {
 
       if (!isLoggedIn) {
         this.log('Login timeout waiting for user to scan QR', 'error');
-        await browser.close();
+        await this.close();
         throw new Error('Login timeout. Please try again and scan the QR code within 2 minutes.');
       }
 
       this.log('Login detected, extracting cookies');
 
-      // Get all cookies from the page
+      // Get all cookies from the page - puppeteer deprecated the 0-args version but it still works
       const cookies = await page.cookies();
       this.log(`Extracted ${cookies.length} cookies from Chrome`);
 
       // Format cookies into the expected format "name=value"
       const cookieStrings = cookies.map(cookie => `${cookie.name}=${cookie.value}`);
 
-      // Close the browser
-      await browser.close();
-      this.log('Browser closed, login flow completed successfully');
+      // Keep browser open for authenticated session
+      this.authenticatedPage = page;
+      this.log('Login flow completed, browser kept open for authenticated operations');
 
       return cookieStrings;
     } catch (error) {
       this.log(`Error during login flow: ${error}`, 'error');
-      try {
-        await browser.close();
-      } catch (closeError) {
-        this.log(`Failed to close browser: ${closeError}`, 'error');
-      }
+      await this.close();
       throw error;
     }
+  }
+
+  /**
+   * Start an authenticated session with existing cookies from local storage
+   * @param cookieStrings Array of cookie strings in format "name=value"
+   */
+  async startAuthenticatedSession(cookieStrings: string[]): Promise<void> {
+    this.log(`Starting authenticated session with ${cookieStrings.length} saved cookies`);
+
+    // Parse cookie strings into Puppeteer CookieParam objects
+    const cookies: CookieParam[] = cookieStrings.map(cookieStr => {
+      const [name, value] = cookieStr.split('=', 2);
+      return {
+        name,
+        value,
+        domain: '.mp.weixin.qq.com',
+        path: '/',
+      };
+    });
+
+    this.browser = await puppeteer.launch({
+      headless: false,
+      defaultViewport: null,
+      args: [
+        '--start-maximized',
+        '--no-first-run',
+        '--no-default-browser-check',
+      ],
+    });
+
+    try {
+      const page = await this.browser.newPage();
+
+      // Set cookies before navigating
+      await page.setCookie(...cookies);
+      this.log(`Injected ${cookies.length} cookies into browser`);
+
+      await page.goto('https://mp.weixin.qq.com/', {
+        waitUntil: 'networkidle2',
+      });
+
+      // Check if we're already logged in
+      const isLoggedIn = await this.waitForLogin(page);
+
+      if (isLoggedIn) {
+        this.log('Already authenticated with saved cookies');
+        vscode.window.showInformationMessage('Chrome opened, already authenticated with saved login');
+      } else {
+        this.log('Not logged in with saved cookies, waiting for user to scan QR');
+        vscode.window.showInformationMessage('Chrome opened. Please scan QR code to login');
+        const loggedIn = await this.waitForLogin(page);
+        if (!loggedIn) {
+          await this.close();
+          throw new Error('Login timeout. Please try again.');
+        }
+        this.log('Login completed after QR scan');
+      }
+
+      this.authenticatedPage = page;
+      this.log('Authenticated session ready');
+    } catch (error) {
+      this.log(`Error starting authenticated session: ${error}`, 'error');
+      await this.close();
+      throw error;
+    }
+  }
+
+  /**
+   * Create a new draft directly in WeChat MP via browser automation
+   * @param title Article title
+   * @param author Article author
+   * @param content Article HTML content
+   * @param digest Article digest
+   */
+  async createDraftInBrowser(
+    title: string,
+    author: string,
+    content: string,
+    digest?: string
+  ): Promise<string> {
+    if (!this.browser || !this.authenticatedPage) {
+      throw new Error('No authenticated browser session. Please login first.');
+    }
+
+    const page = this.authenticatedPage;
+    this.log(`Starting draft creation: title="${title}"`);
+
+    // Navigate to the draft creation page
+    const createUrl = 'https://mp.weixin.qq.com/cgi-bin/operate_appmsg?t=media/appmsg_edit&action=edit&type=77&appmsgid=100000000';
+    await page.goto(createUrl, {
+      waitUntil: 'networkidle2',
+    });
+    this.log('Navigated to draft creation page');
+
+    // Wait for editor to load
+    await page.waitForSelector('#js_media_edit', { timeout: 30000 });
+    this.log('Editor loaded');
+
+    // Fill title
+    await page.waitForSelector('#title', { timeout: 10000 });
+    await page.evaluate((titleText: string) => {
+      const titleInput = document.getElementById('title') as HTMLInputElement;
+      if (titleInput) {
+        titleInput.value = titleText;
+        // Trigger input event to notify WeChat JS
+        titleInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }, title);
+    this.log('Filled title');
+
+    // Fill author
+    await page.waitForSelector('#author', { timeout: 10000 });
+    await page.evaluate((authorText: string) => {
+      const authorInput = document.getElementById('author') as HTMLInputElement;
+      if (authorInput) {
+        authorInput.value = authorText;
+        authorInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }, author);
+    this.log('Filled author');
+
+    // Wait for the rich text editor iframe to load
+    await page.waitForSelector('#ueditor_iframe', { timeout: 10000 });
+    const frame = await page.frames().find(f => f.url().includes('ueditor'));
+
+    if (!frame) {
+      throw new Error('Could not find editor iframe');
+    }
+
+    // Wait for body to be available
+    await frame.waitForSelector('body', { timeout: 10000 });
+
+    // Set the HTML content into the editor
+    await frame.evaluate((html: string) => {
+      const body = document.body;
+      if (body) {
+        body.innerHTML = html;
+        // Trigger change event
+        body.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }, content);
+    this.log('Filled article content');
+
+    // Fill digest if provided
+    if (digest) {
+      try {
+        await page.waitForSelector('#digest', { timeout: 5000 });
+        await page.evaluate((digestText: string) => {
+          const digestInput = document.getElementById('digest') as HTMLTextAreaElement;
+          if (digestInput) {
+            digestInput.value = digestText;
+            digestInput.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        }, digest);
+        this.log('Filled digest');
+      } catch (error) {
+        this.log('Digest field not found, skipping', 'info');
+      }
+    }
+
+    // Find the save draft button and click it
+    await page.waitForSelector('#js_save', { timeout: 10000 });
+    await page.click('#js_save');
+    this.log('Clicked Save Draft button');
+
+    // Wait for save to complete and get the draft URL
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 });
+
+    // Get the current URL which is the edit URL for the created draft
+    const draftUrl = page.url();
+    this.log(`Draft created successfully, draft URL: ${draftUrl}`);
+    vscode.window.showInformationMessage('Draft created successfully in Chrome');
+
+    return draftUrl;
+  }
+
+  /**
+   * Close the browser session
+   */
+  async close(): Promise<void> {
+    if (this.browser) {
+      try {
+        await this.browser.close();
+      } catch (error) {
+        this.log(`Error closing browser: ${error}`, 'error');
+      }
+      this.browser = null;
+      this.authenticatedPage = null;
+    }
+  }
+
+  /**
+   * Check if we have an active authenticated session
+   */
+  isSessionActive(): boolean {
+    return !!(this.browser && this.authenticatedPage);
   }
 
   /**
