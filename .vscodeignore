@@ -1,0 +1,47 @@
+# Node dependencies
+node_modules/**
+# But keep production dependencies for canvas binaries
+!node_modules/canvas/**
+!node_modules/canvas/build/**
+
+# Out of directory
+src/**
+!out/**
+# Wait, we do need the compiled output in out/
+out/**/*.js.map
+
+# VSIX shouldn't be included
+*.vsix
+
+# Development
+.vscode
+.git
+.github
+coverage
+docs
+*.log
+
+# webview source
+webview-src/**
+!webview-src/dist/**
+
+# TypeScript source
+*.ts
+!out/**/*.js
+
+# Testing
+**/*.test.ts
+**/*.test.js
+src/test/**/__mocks__/**
+
+# Environment
+.env
+.env.local
+*.local.json
+
+# Coverage
+coverage
+
+# NPM
+.npmrc
+.npmignore
