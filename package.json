@@ -55,7 +55,7 @@
       },
       {
         "command": "multipost.loginWeChatChromeCdp",
-        "title": "Login MultiPost (Fully Automated with Chrome)"
+        "title": "CDP Fully Automated Upload"
       },
       {
         "command": "multipost.inputCookieWeChat",
