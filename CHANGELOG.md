@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.2.3 (2026-04-05)
+
+- 🐛 Fix: **Stuck in "Activating" forever** - `.vscodeignore` was excluding all `node_modules` except `canvas`, causing `Cannot find module 'node-fetch'` error on activation. Now includes all production dependencies in VSIX.
+- 🐛 Fix: QR code not showing in webview - added `<base href="https://mp.weixin.qq.com/">` to fix relative resource paths (images, CSS, JS)
+- ✨ Already had **Manual Cookie Input** command for when QR code doesn't show in webview - added to command palette so users can find it
+- 🐛 Fix: "parameter error (200002)" when creating draft - added missing required parameter `count=1` which WeChat API requires
+
 ## 0.2.2 (2026-04-05)
 
 - 🐛 Fix: `invalid session` error when creating draft - token extraction failed because Node.js request doesn't share browser session

@@ -162,12 +162,28 @@ setInterval(() => {
                     },
                 });
                 let html = await response.text();
+                // Add base tag to fix relative resource paths (images, css, js)
+                if (html.includes('</head>')) {
+                    html = html.replace('</head>', `<base href="https://mp.weixin.qq.com/"></head>`);
+                }
+                else if (html.includes('<head>')) {
+                    html = html.replace('<head>', `<head><base href="https://mp.weixin.qq.com/">`);
+                }
+                else {
+                    // No head tag, add it at the beginning
+                    html = `<head><base href="https://mp.weixin.qq.com/"></head>${html}`;
+                }
                 // Inject our script before </body>
-                html = html.replace('</body>', `${injectedScript}</body>`);
-                // Update CSP to allow everything
-                html = html.replace(/<meta[^>]*http-equiv="Content-Security-Policy"[^>]*>/, '');
+                if (html.includes('</body>')) {
+                    html = html.replace('</body>', `${injectedScript}</body>`);
+                }
+                else {
+                    html += injectedScript;
+                }
+                // Remove existing CSP to allow all resources and scripts
+                html = html.replace(/<meta[^>]*http-equiv="Content-Security-Policy"[^>]*>/ig, '');
                 panel.webview.html = html;
-                log('Login page loaded in webview');
+                log('Login page loaded in webview with base href fix');
             }
             catch (error) {
                 panel.webview.html = `<html><body><h1>Failed to load login page</h1><p>${error}</p></body></html>`;

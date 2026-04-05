@@ -374,8 +374,10 @@ export class WeChatService implements IWeChatService {
       const form = new URLSearchParams();
       form.append('token', this.authInfo.token);
       form.append('lang', 'zh_CN');
+      form.append('f', 'json');
+      form.append('token', this.authInfo.token);
 
-      // Article content
+      // Article content - for single draft, index is 0
       form.append(`title0`, title);
       form.append(`author0`, author);
       form.append(`content0`, content);
@@ -383,6 +385,10 @@ export class WeChatService implements IWeChatService {
       form.append(`show_cover_pic0`, '0');
       form.append(`need_open_comment0`, '1');
       form.append(`only_fans_can_comment0`, '0');
+
+      // Add required counters for multi article draft
+      form.append('count', '1');
+      form.append('multi_appmsgtoken', String(Math.floor(Math.random() * 1000000000)));
 
       const headers = this.getRequestHeaders();
       headers['Origin'] = 'https://mp.weixin.qq.com';
