@@ -1,4 +1,4 @@
-import { defaultWechatTheme } from '../../services/defaultTheme';
+import { defaultWechatTheme } from 'src/services/defaultTheme';
 
 describe('defaultWechatTheme', () => {
   it('should export the default theme CSS', () => {

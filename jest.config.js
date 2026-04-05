@@ -6,6 +6,11 @@ module.exports = {
     '<rootDir>/src/test/unit/**/*.test.ts',
     '<rootDir>/src/test/unit/**/*.test.js',
   ],
+  transform: {
+    '^.+\\.tsx?$': ['ts-jest', {
+      tsconfig: 'tsconfig.test.json',
+    }],
+  },
   // Mock all external dependencies that need it
   moduleNameMapper: {
     '^vscode$': '<rootDir>/src/test/__mocks__/vscode.ts',

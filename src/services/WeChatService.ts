@@ -37,27 +37,32 @@ export class WeChatService implements IWeChatService {
   async loadAuthFromStorage(): Promise<void> {
     this.log('Loading auth from storage...');
     let stored: string | undefined;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
     try {
-      // Force resolve after timeout regardless of secret storage state
-      stored = await Promise.race([
-        Promise.resolve(this.secretStorage.get(STORAGE_KEY))
-          .catch((err: unknown) => {
-            this.log('Secret storage get failed: ' + String(err), 'error');
-            return undefined;
-          }),
-        new Promise<undefined>((resolve) => {
-          setTimeout(() => {
-            this.log('Secret storage read timed out after ' + STORAGE_LOAD_TIMEOUT_MS + 'ms', 'warn');
-            resolve(undefined);
-          }, STORAGE_LOAD_TIMEOUT_MS);
-        }),
-      ]);
+      const storageRead = Promise.resolve(this.secretStorage.get(STORAGE_KEY))
+        .catch((err: unknown) => {
+          this.log('Secret storage get failed: ' + String(err), 'error');
+          return undefined;
+        });
+
+      const timeout = new Promise<undefined>((resolve) => {
+        timeoutHandle = setTimeout(() => {
+          this.log('Secret storage read timed out after ' + STORAGE_LOAD_TIMEOUT_MS + 'ms', 'warn');
+          resolve(undefined);
+        }, STORAGE_LOAD_TIMEOUT_MS);
+      });
+
+      stored = await Promise.race([storageRead, timeout]);
     } catch (error) {
       this.log('Failed to read auth from secret storage', 'error');
       this.log(String(error), 'error');
       this.authInfo = null;
       return;
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
     }
 
     if (stored) {

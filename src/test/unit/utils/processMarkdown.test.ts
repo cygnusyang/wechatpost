@@ -1,6 +1,6 @@
-import { processMarkdownForUpload } from '../../utils/processMarkdown';
-import { WeChatService } from '../../services/WeChatService';
-import { renderMermaidToBuffer } from '../../utils/mermaidRenderer';
+import { processMarkdownForUpload } from 'src/utils/processMarkdown';
+import { WeChatService } from 'src/services/WeChatService';
+import { renderMermaidToBuffer } from 'src/utils/mermaidRenderer';
 
 // Mock all the unified/remark dependencies since they are ES modules
 // and cause issues with Jest
@@ -20,7 +20,7 @@ jest.mock('rehype-highlight', () => jest.fn());
 jest.mock('rehype-stringify', () => jest.fn());
 
 // Mock mermaid renderer
-jest.mock('./mermaidRenderer');
+jest.mock('src/utils/mermaidRenderer');
 
 describe('processMarkdownForUpload', () => {
   let mockWeChatService: jest.Mocked<WeChatService>;

@@ -46,7 +46,7 @@ jest.mock('vscode', () => {
 });
 
 import * as vscode from 'vscode';
-import { activate, deactivate } from '../../extension';
+import { activate, deactivate } from 'src/extension';
 
 describe('extension', () => {
   let mockContext: vscode.ExtensionContext;
@@ -108,19 +108,19 @@ describe('extension', () => {
     // Since no active editor, updatePreviewAuthStatus shouldn't error
     expect(previewCallback).not.toThrow();
 
-    // Test login command - should open webview panel
-    const loginCallback = registerCommandCalls[1][1];
+    // Test login command - should handle no active editor
+    const loginCallback = registerCommandCalls[3][1];
     loginCallback();
-    expect(vscode.window.createWebviewPanel).toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('No active editor');
     // Should not throw even though fetch will fail in mock
 
     // Test logout command - should clear auth and show message
-    const logoutCallback = registerCommandCalls[2][1];
+    const logoutCallback = registerCommandCalls[1][1];
     logoutCallback();
     expect(vscode.window.showInformationMessage).toHaveBeenCalled();
 
     // Test input cookie command - should show input box
-    const inputCookieCallback = registerCommandCalls[3][1];
+    const inputCookieCallback = registerCommandCalls[2][1];
     inputCookieCallback();
     // Should not throw even when user cancels
 

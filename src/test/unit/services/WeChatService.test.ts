@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { WeChatService } from '../../services/WeChatService';
-import { WeChatAuthInfo } from '../../interfaces/IWeChatService';
+import { WeChatService } from 'src/services/WeChatService';
+import { WeChatAuthInfo } from 'src/interfaces/IWeChatService';
+import type { CookieParam } from 'puppeteer';
 
 // Mock external dependencies
 jest.mock('node-fetch', () => ({
@@ -18,6 +19,14 @@ jest.mock('form-data', () => ({
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const mockFetch = require('node-fetch').default as jest.Mock;
+
+const makeCookie = (name: string, value: string): CookieParam => ({
+  name,
+  value,
+  domain: '.mp.weixin.qq.com',
+  path: '/',
+  secure: true,
+});
 
 describe('WeChatService', () => {
   let mockSecretStorage: Partial<vscode.SecretStorage>;
@@ -172,7 +181,7 @@ describe('WeChatService', () => {
       nickName: 'Test User',
       svrTime: 123456,
       avatar: 'avatar-url',
-      cookies: ['cookie1=val', 'cookie2=val'],
+      cookies: [makeCookie('cookie1', 'val'), makeCookie('cookie2', 'val')],
     };
 
     await weChatService.saveAuthInfo(mockAuth);
@@ -223,7 +232,7 @@ describe('WeChatService', () => {
       nickName: 'Test User',
       svrTime: 123456,
       avatar: 'avatar-url',
-      cookies: ['cookie1=val'],
+      cookies: [makeCookie('cookie1', 'val')],
     };
 
     await weChatService.saveAuthInfo(mockAuth);
