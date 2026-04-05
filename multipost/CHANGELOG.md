@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.1.2 (2026-04-05)
+
+- 📝 Add README.md
+- 🏷️ Bump version to 0.1.2
+
 ## 0.1.1 (2026-04-05)
 
 - 🐛 Fix: Command 'wechat-publisher.preview' not found error
