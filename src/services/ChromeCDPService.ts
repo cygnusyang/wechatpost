@@ -118,6 +118,16 @@ export class ChromeCDPService {
     }
 
     // Cookies are already full CookieParam objects from storage (saved when extracted from Chrome)
+    // Filter out any invalid cookies that miss required fields
+    const validCookies: CookieParam[] = cookies.filter(cookie => {
+      const isValid = !!cookie.name && typeof cookie.value === 'string' && !!cookie.domain && !!cookie.path;
+      if (!isValid) {
+        this.log(`Skipping invalid cookie (missing required fields): ${cookie.name || JSON.stringify(cookie)}`, 'warn');
+      }
+      return isValid;
+    });
+
+    this.log(`Filtered to ${validCookies.length} valid cookies out of ${cookies.length} total`);
 
     this.browser = await puppeteer.launch({
       headless: false,
