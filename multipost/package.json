@@ -2,7 +2,8 @@
   "name": "multipost",
   "displayName": "MultiPost - WeChat Publisher",
   "description": "Publish Markdown directly to WeChat Official Accounts from VSCode",
-  "version": "0.0.1",
+  "version": "0.1.1",
+  "publisher": "cygnus",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -52,6 +53,7 @@
   "dependencies": {
     "antd": "^5.12.2",
     "canvas": "^2.11.2",
+    "jsdom": "^29.0.1",
     "mermaid": "^10.9.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -64,6 +66,7 @@
   },
   "devDependencies": {
     "@types/form-data": "^2.2.1",
+    "@types/jsdom": "^28.0.1",
     "@types/node": "^20.10.0",
     "@types/node-fetch": "^2.6.13",
     "@types/react": "^18.2.0",

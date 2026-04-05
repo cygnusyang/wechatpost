@@ -17,29 +17,30 @@ let previewService: PreviewService;
 let settingsService: SettingsService;
 
 export async function activate(context: vscode.ExtensionContext) {
-  // Initialize services
-  weChatService = new WeChatService(context.secrets);
-  previewService = new PreviewService(context.extensionUri);
-  settingsService = new SettingsService(context);
+  try {
+    // Initialize services
+    weChatService = new WeChatService(context.secrets);
+    previewService = new PreviewService(context.extensionUri);
+    settingsService = new SettingsService(context);
 
-  // Load saved auth
-  await weChatService.loadAuthFromStorage();
+    // Load saved auth
+    await weChatService.loadAuthFromStorage();
 
-  // Register commands
-  let disposable = vscode.commands.registerCommand(
-    'wechat-publisher.preview',
-    () => {
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) {
-        vscode.window.showErrorMessage('No active editor');
-        return;
+    // Register commands
+    let disposable = vscode.commands.registerCommand(
+      'wechat-publisher.preview',
+      () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+          vscode.window.showErrorMessage('No active editor');
+          return;
+        }
+        const markdown = editor.document.getText();
+        previewService.openPreview(markdown);
+        updatePreviewAuthStatus();
       }
-      const markdown = editor.document.getText();
-      previewService.openPreview(markdown);
-      updatePreviewAuthStatus();
-    }
-  );
-  context.subscriptions.push(disposable);
+    );
+    context.subscriptions.push(disposable);
 
   disposable = vscode.commands.registerCommand(
     'wechat-publisher.loginWeChat',
@@ -178,6 +179,11 @@ export async function activate(context: vscode.ExtensionContext) {
       undefined,
       context.subscriptions
     );
+  }
+  } catch (error) {
+    console.error('Failed to activate extension:', error);
+    vscode.window.showErrorMessage(`Failed to activate MultiPost: ${(error as Error).message}`);
+    throw error;
   }
 }
 

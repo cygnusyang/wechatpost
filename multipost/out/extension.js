@@ -53,29 +53,30 @@ let weChatService;
 let previewService;
 let settingsService;
 async function activate(context) {
-    // Initialize services
-    weChatService = new WeChatService_1.WeChatService(context.secrets);
-    previewService = new PreviewService_1.PreviewService(context.extensionUri);
-    settingsService = new SettingsService_1.SettingsService(context);
-    // Load saved auth
-    await weChatService.loadAuthFromStorage();
-    // Register commands
-    let disposable = vscode.commands.registerCommand('wechat-publisher.preview', () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            vscode.window.showErrorMessage('No active editor');
-            return;
-        }
-        const markdown = editor.document.getText();
-        previewService.openPreview(markdown);
-        updatePreviewAuthStatus();
-    });
-    context.subscriptions.push(disposable);
-    disposable = vscode.commands.registerCommand('wechat-publisher.loginWeChat', async () => {
-        const panel = vscode.window.createWebviewPanel('wechatLogin', 'WeChat Login', vscode.ViewColumn.One, {
-            enableScripts: true,
+    try {
+        // Initialize services
+        weChatService = new WeChatService_1.WeChatService(context.secrets);
+        previewService = new PreviewService_1.PreviewService(context.extensionUri);
+        settingsService = new SettingsService_1.SettingsService(context);
+        // Load saved auth
+        await weChatService.loadAuthFromStorage();
+        // Register commands
+        let disposable = vscode.commands.registerCommand('wechat-publisher.preview', () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showErrorMessage('No active editor');
+                return;
+            }
+            const markdown = editor.document.getText();
+            previewService.openPreview(markdown);
+            updatePreviewAuthStatus();
         });
-        panel.webview.html = `
+        context.subscriptions.push(disposable);
+        disposable = vscode.commands.registerCommand('wechat-publisher.loginWeChat', async () => {
+            const panel = vscode.window.createWebviewPanel('wechatLogin', 'WeChat Login', vscode.ViewColumn.One, {
+                enableScripts: true,
+            });
+            panel.webview.html = `
 <!DOCTYPE html>
 <html>
 <head>
@@ -98,87 +99,93 @@ async function activate(context) {
 </body>
 </html>
       `;
-        // After login, check auth
-        panel.onDidDispose(async () => {
-            const result = await weChatService.checkAuth();
-            if (result.isAuthenticated) {
-                vscode.window.showInformationMessage(`Logged in as ${result.authInfo?.nickName}`);
-                updatePreviewAuthStatus();
-            }
-            else {
-                vscode.window.showErrorMessage('Login failed. Please try again.');
-            }
-        });
-    });
-    context.subscriptions.push(disposable);
-    disposable = vscode.commands.registerCommand('wechat-publisher.logoutWeChat', async () => {
-        weChatService.clearAuth();
-        vscode.window.showInformationMessage('Logged out from WeChat');
-        updatePreviewAuthStatus();
-    });
-    context.subscriptions.push(disposable);
-    disposable = vscode.commands.registerCommand('wechat-publisher.uploadToWeChat', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            vscode.window.showErrorMessage('No active editor');
-            return;
-        }
-        const authInfo = weChatService.getAuthInfo();
-        if (!authInfo) {
-            vscode.window.showErrorMessage('Not logged in. Please login first.');
-            await vscode.commands.executeCommand('wechat-publisher.loginWeChat');
-            return;
-        }
-        // Check auth is still valid
-        const authCheck = await weChatService.checkAuth();
-        if (!authCheck.isAuthenticated) {
-            vscode.window.showErrorMessage('Authentication expired. Please login again.');
-            return;
-        }
-        const markdown = editor.document.getText();
-        const fileName = editor.document.fileName;
-        const title = extractTitle(markdown) || fileName.split('/').pop()?.replace(/\.md$/, '') || 'Untitled';
-        await vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: 'Uploading to WeChat...',
-            cancellable: false,
-        }, async () => {
-            try {
-                const { html, errors } = await processMarkdownForUpload(markdown);
-                if (errors.length > 0) {
-                    vscode.window.showWarningMessage(`Upload completed with ${errors.length} errors: ${errors[0]}`);
-                }
-                const author = settingsService.getDefaultAuthor() || authInfo.nickName || '';
-                const digest = html.replace(/<[^>]*>/g, '').slice(0, 120);
-                const result = await weChatService.createDraft(title, author, html, digest);
-                if (result.success && result.draftUrl) {
-                    vscode.window.showInformationMessage('Draft created successfully!');
-                    if (settingsService.shouldAutoOpenDraft()) {
-                        await vscode.env.openExternal(vscode.Uri.parse(result.draftUrl));
-                    }
+            // After login, check auth
+            panel.onDidDispose(async () => {
+                const result = await weChatService.checkAuth();
+                if (result.isAuthenticated) {
+                    vscode.window.showInformationMessage(`Logged in as ${result.authInfo?.nickName}`);
+                    updatePreviewAuthStatus();
                 }
                 else {
-                    vscode.window.showErrorMessage(`Upload failed: ${result.error}`);
+                    vscode.window.showErrorMessage('Login failed. Please try again.');
                 }
-            }
-            catch (error) {
-                vscode.window.showErrorMessage(`Upload failed: ${error.message}`);
-            }
+            });
         });
-    });
-    context.subscriptions.push(disposable);
-    // Listen for messages from webview
-    const panel = previewService.getPanel();
-    if (panel) {
-        panel.webview.onDidReceiveMessage(async (message) => {
-            if (message.type === 'uploadToWeChat') {
-                await vscode.commands.executeCommand('wechat-publisher.uploadToWeChat');
+        context.subscriptions.push(disposable);
+        disposable = vscode.commands.registerCommand('wechat-publisher.logoutWeChat', async () => {
+            weChatService.clearAuth();
+            vscode.window.showInformationMessage('Logged out from WeChat');
+            updatePreviewAuthStatus();
+        });
+        context.subscriptions.push(disposable);
+        disposable = vscode.commands.registerCommand('wechat-publisher.uploadToWeChat', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showErrorMessage('No active editor');
+                return;
             }
-            else if (message.type === 'copyHtml') {
-                await vscode.env.clipboard.writeText(message.html);
-                vscode.window.showInformationMessage('HTML copied to clipboard');
+            const authInfo = weChatService.getAuthInfo();
+            if (!authInfo) {
+                vscode.window.showErrorMessage('Not logged in. Please login first.');
+                await vscode.commands.executeCommand('wechat-publisher.loginWeChat');
+                return;
             }
-        }, undefined, context.subscriptions);
+            // Check auth is still valid
+            const authCheck = await weChatService.checkAuth();
+            if (!authCheck.isAuthenticated) {
+                vscode.window.showErrorMessage('Authentication expired. Please login again.');
+                return;
+            }
+            const markdown = editor.document.getText();
+            const fileName = editor.document.fileName;
+            const title = extractTitle(markdown) || fileName.split('/').pop()?.replace(/\.md$/, '') || 'Untitled';
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: 'Uploading to WeChat...',
+                cancellable: false,
+            }, async () => {
+                try {
+                    const { html, errors } = await processMarkdownForUpload(markdown);
+                    if (errors.length > 0) {
+                        vscode.window.showWarningMessage(`Upload completed with ${errors.length} errors: ${errors[0]}`);
+                    }
+                    const author = settingsService.getDefaultAuthor() || authInfo.nickName || '';
+                    const digest = html.replace(/<[^>]*>/g, '').slice(0, 120);
+                    const result = await weChatService.createDraft(title, author, html, digest);
+                    if (result.success && result.draftUrl) {
+                        vscode.window.showInformationMessage('Draft created successfully!');
+                        if (settingsService.shouldAutoOpenDraft()) {
+                            await vscode.env.openExternal(vscode.Uri.parse(result.draftUrl));
+                        }
+                    }
+                    else {
+                        vscode.window.showErrorMessage(`Upload failed: ${result.error}`);
+                    }
+                }
+                catch (error) {
+                    vscode.window.showErrorMessage(`Upload failed: ${error.message}`);
+                }
+            });
+        });
+        context.subscriptions.push(disposable);
+        // Listen for messages from webview
+        const panel = previewService.getPanel();
+        if (panel) {
+            panel.webview.onDidReceiveMessage(async (message) => {
+                if (message.type === 'uploadToWeChat') {
+                    await vscode.commands.executeCommand('wechat-publisher.uploadToWeChat');
+                }
+                else if (message.type === 'copyHtml') {
+                    await vscode.env.clipboard.writeText(message.html);
+                    vscode.window.showInformationMessage('HTML copied to clipboard');
+                }
+            }, undefined, context.subscriptions);
+        }
+    }
+    catch (error) {
+        console.error('Failed to activate extension:', error);
+        vscode.window.showErrorMessage(`Failed to activate MultiPost: ${error.message}`);
+        throw error;
     }
 }
 function updatePreviewAuthStatus() {

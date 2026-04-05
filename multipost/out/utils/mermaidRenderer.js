@@ -1,23 +1,71 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.renderMermaidToBuffer = renderMermaidToBuffer;
-const mermaid_1 = __importDefault(require("mermaid"));
 const canvas_1 = require("canvas");
-// Initialize mermaid for server-side rendering
-mermaid_1.default.initialize({
-    startOnLoad: false,
-    theme: 'default',
-    flowchart: {
-        useMaxWidth: true,
-    },
-});
+const jsdom_1 = require("jsdom");
+// mermaid requires a DOM environment, which we need to provide in Node.js
+// We'll dynamically initialize it only when needed
+let mermaidInstance;
+let mermaidInitialized = false;
+async function initMermaid() {
+    if (mermaidInitialized) {
+        return;
+    }
+    // Create a full DOM environment with jsdom
+    const dom = new jsdom_1.JSDOM('<!DOCTYPE html><html><body></body></html>');
+    global.window = dom.window;
+    global.document = dom.window.document;
+    global.navigator = dom.window.navigator;
+    // Dynamic import after DOM is ready
+    const mermaidModule = await Promise.resolve().then(() => __importStar(require('mermaid')));
+    mermaidInstance = mermaidModule.default;
+    mermaidInstance.initialize({
+        startOnLoad: false,
+        theme: 'default',
+        flowchart: {
+            useMaxWidth: true,
+        },
+    });
+    mermaidInitialized = true;
+}
 async function renderMermaidToBuffer(code) {
+    await initMermaid();
     try {
         // Get SVG from mermaid
-        const { svg } = await mermaid_1.default.render('mermaid-diagram', code);
+        const { svg } = await mermaidInstance.render('mermaid-diagram', code);
         // Calculate dimensions
         const viewBoxMatch = svg.match(/viewBox="[\d.\s-]+"/);
         let width = 800;

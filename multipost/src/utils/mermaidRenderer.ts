@@ -1,19 +1,42 @@
-import mermaid from 'mermaid';
 import { createCanvas } from 'canvas';
+import { JSDOM } from 'jsdom';
 
-// Initialize mermaid for server-side rendering
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'default',
-  flowchart: {
-    useMaxWidth: true,
-  },
-});
+// mermaid requires a DOM environment, which we need to provide in Node.js
+// We'll dynamically initialize it only when needed
+
+let mermaidInstance: any;
+let mermaidInitialized = false;
+
+async function initMermaid(): Promise<void> {
+  if (mermaidInitialized) {
+    return;
+  }
+
+  // Create a full DOM environment with jsdom
+  const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>');
+  global.window = dom.window as any;
+  global.document = dom.window.document;
+  global.navigator = dom.window.navigator;
+
+  // Dynamic import after DOM is ready
+  const mermaidModule = await import('mermaid');
+  mermaidInstance = mermaidModule.default;
+  mermaidInstance.initialize({
+    startOnLoad: false,
+    theme: 'default',
+    flowchart: {
+      useMaxWidth: true,
+    },
+  });
+
+  mermaidInitialized = true;
+}
 
 export async function renderMermaidToBuffer(code: string): Promise<Buffer> {
+  await initMermaid();
   try {
     // Get SVG from mermaid
-    const { svg } = await mermaid.render('mermaid-diagram', code);
+    const { svg } = await mermaidInstance.render('mermaid-diagram', code);
 
     // Calculate dimensions
     const viewBoxMatch = svg.match(/viewBox="[\d.\s-]+"/);
