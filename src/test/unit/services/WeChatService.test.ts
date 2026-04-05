@@ -42,6 +42,10 @@ describe('WeChatService', () => {
     jest.clearAllMocks();
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('should create instance without error', () => {
     expect(weChatService).toBeDefined();
   });
@@ -66,6 +70,17 @@ describe('WeChatService', () => {
 
     await weChatService.loadAuthFromStorage();
     expect(weChatService.getAuthInfo()).toEqual(mockAuth);
+  });
+
+  it('should handle secret storage timeout gracefully', async () => {
+    jest.useFakeTimers();
+    (mockSecretStorage.get as jest.Mock).mockImplementation(() => new Promise(() => {}));
+
+    const pending = weChatService.loadAuthFromStorage();
+    jest.advanceTimersByTime(1600);
+    await pending;
+
+    expect(weChatService.getAuthInfo()).toBeNull();
   });
 
   it('should handle invalid JSON gracefully', async () => {
@@ -146,6 +161,42 @@ describe('WeChatService', () => {
     expect(result.isAuthenticated).toBe(false);
   });
 
+  it('should authenticate with manual cookie input and dedupe cookies', async () => {
+    const html = `
+      <script>
+        token: "test-token",
+        ticket: "test-ticket",
+        user_name: "test-user",
+        nick_name: "Test User",
+        time: "123456",
+        head_img: "https://example.com/avatar.jpg"
+      </script>
+    `;
+
+    mockFetch.mockResolvedValue({
+      status: 200,
+      statusText: 'OK',
+      text: jest.fn().mockResolvedValue(html),
+      headers: {
+        raw: jest.fn().mockReturnValue({ 'set-cookie': ['cookie1=new; HttpOnly', 'cookie3=val3'] }),
+      },
+    });
+
+    const result = await weChatService.checkAuthWithCookies(['cookie1=old', 'cookie2=val2']);
+
+    expect(result.isAuthenticated).toBe(true);
+    expect(result.authInfo?.cookies.map(cookie => cookie.name)).toEqual(['cookie1', 'cookie2', 'cookie3']);
+    expect(mockSecretStorage.store).toHaveBeenCalled();
+  });
+
+  it('should return false when checkAuthWithCookies throws', async () => {
+    mockFetch.mockRejectedValue(new Error('Network error'));
+
+    const result = await weChatService.checkAuthWithCookies(['cookie1=old']);
+
+    expect(result.isAuthenticated).toBe(false);
+  });
+
   it('should return error when uploading image without authentication', async () => {
     const buffer = Buffer.from('');
     const result = await weChatService.uploadImage(buffer, 'test.png');
@@ -222,6 +273,33 @@ describe('WeChatService', () => {
     const result = await weChatService.createDraft('Title', 'Author', 'Content');
     expect(result.success).toBe(false);
     expect(result.error).toContain('Network error');
+  });
+
+  it('should create draft successfully', async () => {
+    const mockAuth: WeChatAuthInfo = {
+      token: 'test-token',
+      ticket: 'test-ticket',
+      userName: 'test-user',
+      nickName: 'Test User',
+      svrTime: 123456,
+      avatar: 'avatar-url',
+      cookies: [makeCookie('cookie1', 'val')],
+    };
+
+    await weChatService.saveAuthInfo(mockAuth);
+    mockFetch.mockResolvedValue({
+      status: 200,
+      json: jest.fn().mockResolvedValue({
+        base_resp: { ret: 0 },
+        appMsgId: 42,
+      }),
+    });
+
+    const result = await weChatService.createDraft('Title', 'Author', '<p>Content</p>', 'Digest');
+
+    expect(result.success).toBe(true);
+    expect(result.appMsgId).toBe(42);
+    expect(result.draftUrl).toContain('appmsgid=42');
   });
 
   it('should return createDraft error when response indicates failure', async () => {

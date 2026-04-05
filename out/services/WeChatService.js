@@ -66,21 +66,20 @@ class WeChatService {
     async loadAuthFromStorage() {
         this.log('Loading auth from storage...');
         let stored;
+        let timeoutHandle;
         try {
-            // Force resolve after timeout regardless of secret storage state
-            stored = await Promise.race([
-                Promise.resolve(this.secretStorage.get(STORAGE_KEY))
-                    .catch((err) => {
-                    this.log('Secret storage get failed: ' + String(err), 'error');
-                    return undefined;
-                }),
-                new Promise((resolve) => {
-                    setTimeout(() => {
-                        this.log('Secret storage read timed out after ' + STORAGE_LOAD_TIMEOUT_MS + 'ms', 'warn');
-                        resolve(undefined);
-                    }, STORAGE_LOAD_TIMEOUT_MS);
-                }),
-            ]);
+            const storageRead = Promise.resolve(this.secretStorage.get(STORAGE_KEY))
+                .catch((err) => {
+                this.log('Secret storage get failed: ' + String(err), 'error');
+                return undefined;
+            });
+            const timeout = new Promise((resolve) => {
+                timeoutHandle = setTimeout(() => {
+                    this.log('Secret storage read timed out after ' + STORAGE_LOAD_TIMEOUT_MS + 'ms', 'warn');
+                    resolve(undefined);
+                }, STORAGE_LOAD_TIMEOUT_MS);
+            });
+            stored = await Promise.race([storageRead, timeout]);
         }
         catch (error) {
             this.log('Failed to read auth from secret storage', 'error');
@@ -88,9 +87,35 @@ class WeChatService {
             this.authInfo = null;
             return;
         }
+        finally {
+            if (timeoutHandle) {
+                clearTimeout(timeoutHandle);
+            }
+        }
         if (stored) {
             try {
                 this.authInfo = JSON.parse(stored);
+                // Backward compatibility: convert old string[] cookies to new CookieParam[] format
+                if (this.authInfo && this.authInfo.cookies.length > 0 && typeof this.authInfo.cookies[0] === 'string') {
+                    this.log('Converting old cookie format (string[]) to new format (CookieParam[])', 'info');
+                    const oneYearFromNow = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
+                    this.authInfo.cookies = this.authInfo.cookies.map(cookieStr => {
+                        const [name, value] = cookieStr.split('=', 2);
+                        return {
+                            name,
+                            value,
+                            domain: '.mp.weixin.qq.com',
+                            path: '/',
+                            expires: oneYearFromNow,
+                            httpOnly: false,
+                            secure: true,
+                            sameSite: 'Lax',
+                        };
+                    }).filter(cookie => !!cookie.name && cookie.value !== undefined);
+                    // Save the converted format
+                    await this.saveAuthInfo(this.authInfo);
+                    this.log(`Converted ${this.authInfo.cookies.length} cookies to new format`, 'info');
+                }
                 this.log(`Auth loaded successfully for user: ${this.authInfo?.nickName || 'unknown'}`);
             }
             catch (e) {

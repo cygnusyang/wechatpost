@@ -18,6 +18,7 @@ export const window = {
   showErrorMessage: jest.fn(),
   showInformationMessage: jest.fn(),
   showWarningMessage: jest.fn(),
+  showInputBox: jest.fn(),
   withProgress: jest.fn((_, cb) => cb()),
   createWebviewPanel: jest.fn(() => {
     return {
@@ -56,6 +57,10 @@ export enum ViewColumn {
   Beside = -2,
   One = 1,
   Two = 2,
+}
+
+export enum ProgressLocation {
+  Notification = 15,
 }
 
 export type ExtensionContext = {

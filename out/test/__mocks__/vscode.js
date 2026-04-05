@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SecretStorage = exports.ViewColumn = exports.Uri = exports.env = exports.window = exports.commands = exports.workspace = void 0;
+exports.SecretStorage = exports.ProgressLocation = exports.ViewColumn = exports.Uri = exports.env = exports.window = exports.commands = exports.workspace = void 0;
 exports.workspace = {
     getConfiguration: jest.fn(() => ({
         get: jest.fn((key, defaultValue) => defaultValue),
@@ -19,6 +19,7 @@ exports.window = {
     showErrorMessage: jest.fn(),
     showInformationMessage: jest.fn(),
     showWarningMessage: jest.fn(),
+    showInputBox: jest.fn(),
     withProgress: jest.fn((_, cb) => cb()),
     createWebviewPanel: jest.fn(() => {
         return {
@@ -56,6 +57,10 @@ var ViewColumn;
     ViewColumn[ViewColumn["One"] = 1] = "One";
     ViewColumn[ViewColumn["Two"] = 2] = "Two";
 })(ViewColumn || (exports.ViewColumn = ViewColumn = {}));
+var ProgressLocation;
+(function (ProgressLocation) {
+    ProgressLocation[ProgressLocation["Notification"] = 15] = "Notification";
+})(ProgressLocation || (exports.ProgressLocation = ProgressLocation = {}));
 class SecretStorage {
     constructor() {
         this.get = jest.fn();
