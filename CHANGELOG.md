@@ -1,5 +1,11 @@
 # Change Log
 
+## 0.2.0 (2026-04-05)
+
+- ✨ Add extension icon (WeChat green theme with document + upload arrow)
+- 🎨 Icon in SVG format available, convert to PNG for VSCode Marketplace
+- 🏷️ Bump version to 0.2.0 (new feature → bump minor version)
+
 ## 0.1.13 (2026-04-05)
 
 - 🐛 Fix: compile error after regex refactoring - variable names mismatch
