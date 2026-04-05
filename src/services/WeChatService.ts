@@ -90,109 +90,18 @@ export class WeChatService implements IWeChatService {
   async checkAuth(): Promise<{ isAuthenticated: boolean; authInfo?: WeChatAuthInfo }> {
     this.log('Starting WeChat auth check...');
     this.showOutputChannel();
-    
+
     try {
       const headers = this.getRequestHeaders();
       this.log('Sending request to WeChat...', 'info');
-      
+
       const response = await fetch('https://mp.weixin.qq.com/', {
         method: 'GET',
         headers: headers,
         redirect: 'follow',
       });
 
-      this.log(`Response status: ${response.status} ${response.statusText}`);
-      this.log(`Response headers: ${JSON.stringify(response.headers.raw(), null, 2)}`);
-
-      const html = await response.text();
-      this.log(`Response HTML length: ${html.length} characters`);
-      
-      // Extract tokens using regex from HTML
-      // Try multiple patterns to handle different page structures (very robust)
-      let tokenMatch: RegExpMatchArray | null = null;
-
-      // Pattern 1: token = "xxx" or token: "xxx"
-      tokenMatch = html.match(/token\s*[=:]\s*["']([^"']+)["']/);
-      // Pattern 2: t = "xxx" or t: "xxx" (original pattern)
-      if (!tokenMatch) tokenMatch = html.match(/t\s*[=:]\s*["']([^"']+)["']/);
-      // Pattern 3: token without quotes
-      if (!tokenMatch) tokenMatch = html.match(/token\s*[=:]\s*([a-zA-Z0-9_-]+)/);
-      // Pattern 4: look inside script window assignment with any property
-      if (!tokenMatch) tokenMatch = html.match(/token["']?\s*:\s*["']([^"']+)["']/);
-      // Pattern 5: more greedy search across multiple lines
-      if (!tokenMatch) tokenMatch = html.match(/window\.[^<]*token["']?\s*:\s*["']([^"']+)["']/);
-      // Pattern 6: look for token in cgiData or similar
-      if (!tokenMatch) tokenMatch = html.match(/cgiData\s*=\s*\{[\s\S]*?token["']?\s*:\s*["']([^"']+)["']/);
-
-      if (!tokenMatch) {
-        this.log('Failed to extract token from HTML', 'error');
-        this.log('HTML preview (first 2000 chars):' + html.substring(0, 2000), 'error');
-        return { isAuthenticated: false };
-      }
-
-      const token = tokenMatch[1].trim();
-      this.log(`Token found: ${token}`);
-
-      // Try multiple patterns for other fields (very robust)
-      const findMatch = (patterns: RegExp[]): string | undefined => {
-        for (const pat of patterns) {
-          const m = html.match(pat);
-          if (m && m[1]) return m[1].trim();
-        }
-        return undefined;
-      };
-
-      const ticket = findMatch([
-        /ticket\s*[=:]\s*["']([^"']+)["']/,
-        /ticket:\s*["']([^"']+)["']/,
-        /ticket["']?\s*:\s*["']([^"']+)["']/,
-      ]);
-
-      const userName = findMatch([
-        /user_name\s*[=:]\s*["']([^"']+)["']/,
-        /user_name:\s*["']([^"']+)["']/,
-        /user_name["']?\s*:\s*["']([^"']+)["']/,
-      ]);
-
-      const nickName = findMatch([
-        /nick_name\s*[=:]\s*["']([^"']+)["']/,
-        /nick_name:\s*["']([^"']+)["']/,
-        /nick_name["']?\s*:\s*["']([^"']+)["']/,
-      ]);
-
-      const time = findMatch([
-        /time\s*[=:]\s*["']?(\d+)["']?/,
-        /time:\s*["'](\d+)["']/,
-        /time["']?\s*:\s*["']?(\d+)["']?/,
-      ]);
-
-      const avatar = findMatch([
-        /head_img\s*[=:]\s*["']([^"']+)["']/,
-        /head_img:\s*['"]([^'"]+)['"]/,
-        /head_img["']?\s*:\s*["']([^"']+)["']/,
-      ]);
-
-      const cookies = response.headers.raw()['set-cookie'] || [];
-      this.log(`Cookies received: ${cookies.length} cookies`);
-
-      const newAuthInfo: WeChatAuthInfo = {
-        token: token,
-        ticket: ticket || '',
-        userName: userName || '',
-        nickName: nickName || '',
-        svrTime: time ? Number(time) : Date.now() / 1000,
-        avatar: avatar || '',
-        cookies: cookies,
-      };
-
-      this.log(`Auth info extracted: nickName=${newAuthInfo.nickName}, userName=${newAuthInfo.userName}`);
-      this.log('Saving auth info...');
-      
-      this.authInfo = newAuthInfo;
-      await this.saveAuthInfo(newAuthInfo);
-
-      this.log('Auth check successful!', 'info');
-      return { isAuthenticated: true, authInfo: newAuthInfo };
+      return this.extractAuthFromResponse(response);
     } catch (error) {
       this.log('WeChat auth check error:', 'error');
       this.log(String(error), 'error');
@@ -201,6 +110,161 @@ export class WeChatService implements IWeChatService {
       }
       return { isAuthenticated: false };
     }
+  }
+
+  async checkAuthWithCookies(userCookies: string[]): Promise<{ isAuthenticated: boolean; authInfo?: WeChatAuthInfo }> {
+    this.log('Starting WeChat auth check with user-provided cookies...');
+    this.showOutputChannel();
+
+    try {
+      // Create temporary auth with user's cookies
+      const tempAuth: WeChatAuthInfo = {
+        token: '',
+        ticket: '',
+        userName: '',
+        nickName: '',
+        svrTime: Date.now() / 1000,
+        avatar: '',
+        cookies: userCookies,
+      };
+
+      const headers = this.getRequestHeaders(tempAuth);
+      this.log(`Sending request with ${userCookies.length} user cookies`, 'info');
+
+      const response = await fetch('https://mp.weixin.qq.com/', {
+        method: 'GET',
+        headers: headers,
+        redirect: 'follow',
+      });
+
+      const result = await this.extractAuthFromResponse(response);
+
+      // If extraction successful, merge user cookies into the result
+      if (result.isAuthenticated && result.authInfo) {
+        // Combine user-provided cookies with any new cookies from response
+        const combinedCookies = [...userCookies, ...(result.authInfo.cookies || [])];
+        result.authInfo.cookies = combinedCookies;
+        this.authInfo = result.authInfo;
+        await this.saveAuthInfo(result.authInfo);
+      }
+
+      return result;
+    } catch (error) {
+      this.log('WeChat auth check with cookies error:', 'error');
+      this.log(String(error), 'error');
+      if (error instanceof Error) {
+        this.log(`Error stack: ${error.stack}`, 'error');
+      }
+      return { isAuthenticated: false };
+    }
+  }
+
+  private async extractAuthFromResponse(response: fetch.Response): Promise<{ isAuthenticated: boolean; authInfo?: WeChatAuthInfo }> {
+    this.log(`Response status: ${response.status} ${response.statusText}`);
+
+    const html = await response.text();
+    this.log(`Response HTML length: ${html.length} characters`);
+
+    // Extract tokens using regex from HTML
+    // Try multiple patterns to handle different page structures (very robust)
+    let tokenMatch: RegExpMatchArray | null = null;
+
+    // Pattern 1: token = "xxx" or token: "xxx"
+    tokenMatch = html.match(/token\s*[=:]\s*["']([^"']+)["']/);
+    // Pattern 2: t = "xxx" or t: "xxx" (original pattern)
+    if (!tokenMatch) tokenMatch = html.match(/t\s*[=:]\s*["']([^"']+)["']/);
+    // Pattern 3: token without quotes
+    if (!tokenMatch) tokenMatch = html.match(/token\s*[=:]\s*([a-zA-Z0-9_-]+)/);
+    // Pattern 4: look inside script window assignment with any property
+    if (!tokenMatch) tokenMatch = html.match(/token["']?\s*:\s*["']([^"']+)["']/);
+    // Pattern 5: more greedy search across multiple lines
+    if (!tokenMatch) tokenMatch = html.match(/window\.[^<]*token["']?\s*:\s*["']([^"']+)["']/);
+    // Pattern 6: look for token in cgiData or similar
+    if (!tokenMatch) tokenMatch = html.match(/cgiData\s*=\s*\{[\s\S]*?token["']?\s*:\s*["']([^"']+)["']/);
+    // Pattern 7: look for window.__TOKEN__ or similar
+    if (!tokenMatch) tokenMatch = html.match(/window\.__TOKEN__\s*=\s*["']([^"']+)["']/);
+    // Pattern 8: look for token in any script tag
+    if (!tokenMatch) tokenMatch = html.match(/<script[^>]*>[^<]*token["']?\s*:\s*["']([^"']+)["']/);
+
+    if (!tokenMatch) {
+      this.log('Failed to extract token from HTML', 'error');
+      this.log('HTML preview (first 2000 chars):' + html.substring(0, 2000), 'error');
+      return { isAuthenticated: false };
+    }
+
+    const token = tokenMatch[1].trim();
+    this.log(`Token found: ${token}`);
+
+    if (!token) {
+      this.log('Token is empty after extraction', 'error');
+      return { isAuthenticated: false };
+    }
+
+    // Try multiple patterns for other fields (very robust)
+    const findMatch = (patterns: RegExp[]): string | undefined => {
+      for (const pat of patterns) {
+        const m = html.match(pat);
+        if (m && m[1]) return m[1].trim();
+      }
+      return undefined;
+    };
+
+    const ticket = findMatch([
+      /ticket\s*[=:]\s*["']([^"']+)["']/,
+      /ticket:\s*["']([^"']+)["']/,
+      /ticket["']?\s*:\s*["']([^"']+)["']/,
+      /window\.[^<]*ticket["']?\s*:\s*["']([^"']+)["']/,
+    ]);
+
+    const userName = findMatch([
+      /user_name\s*[=:]\s*["']([^"']+)["']/,
+      /user_name:\s*["']([^"']+)["']/,
+      /user_name["']?\s*:\s*["']([^"']+)["']/,
+      /userName\s*[=:]\s*["']([^"']+)["']/,
+    ]);
+
+    const nickName = findMatch([
+      /nick_name\s*[=:]\s*["']([^"']+)["']/,
+      /nick_name:\s*["']([^"']+)["']/,
+      /nick_name["']?\s*:\s*["']([^"']+)["']/,
+      /nickName\s*[=:]\s*["']([^"']+)["']/,
+    ]);
+
+    const time = findMatch([
+      /time\s*[=:]\s*["']?(\d+)["']?/,
+      /time:\s*["'](\d+)["']/,
+      /time["']?\s*:\s*["']?(\d+)["']?/,
+      /svr_time\s*[=:]\s*["']?(\d+)["']?/,
+    ]);
+
+    const avatar = findMatch([
+      /head_img\s*[=:]\s*["']([^"']+)["']/,
+      /head_img:\s*['"]([^'"]+)['"]/,
+      /head_img["']?\s*:\s*["']([^"']+)["']/,
+      /headImg\s*[=:]\s*["']([^"']+)["']/,
+    ]);
+
+    const cookies = response.headers.raw()['set-cookie'] || [];
+    this.log(`Cookies received: ${cookies.length} cookies`);
+
+    const newAuthInfo: WeChatAuthInfo = {
+      token: token,
+      ticket: ticket || '',
+      userName: userName || '',
+      nickName: nickName || '',
+      svrTime: time ? Number(time) : Date.now() / 1000,
+      avatar: avatar || '',
+      cookies: cookies,
+    };
+
+    this.log(`Auth info extracted: nickName=${newAuthInfo.nickName}, userName=${newAuthInfo.userName}`);
+    this.log('Saving auth info...');
+
+    this.authInfo = newAuthInfo;
+    await this.saveAuthInfo(newAuthInfo);
+
+    this.log('Auth check successful!', 'info');
+    return { isAuthenticated: true, authInfo: newAuthInfo };
   }
 
   async uploadImage(buffer: Buffer, filename: string): Promise<WeChatUploadResult> {
@@ -299,6 +363,7 @@ export class WeChatService implements IWeChatService {
         sub: 'create',
         type: '77',
         token: this.authInfo.token,
+        f: 'json',
         lang: 'zh_CN',
       });
 
@@ -309,7 +374,6 @@ export class WeChatService implements IWeChatService {
       const form = new URLSearchParams();
       form.append('token', this.authInfo.token);
       form.append('lang', 'zh_CN');
-      form.append('f', 'json');
 
       // Article content
       form.append(`title0`, title);
@@ -356,13 +420,14 @@ export class WeChatService implements IWeChatService {
     }
   }
 
-  private getRequestHeaders(): Record<string, string> {
+  private getRequestHeaders(auth?: WeChatAuthInfo): Record<string, string> {
+    const targetAuth = auth || this.authInfo;
     const headers: Record<string, string> = {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     };
 
-    if (this.authInfo?.cookies) {
-      headers['Cookie'] = this.authInfo.cookies
+    if (targetAuth?.cookies) {
+      headers['Cookie'] = targetAuth.cookies
         .map(cookie => cookie.split(';')[0])
         .join('; ');
     }

@@ -47,6 +47,37 @@ jest.mock('remark-gfm', () => jest.fn());
 jest.mock('remark-rehype', () => jest.fn());
 jest.mock('rehype-highlight', () => jest.fn());
 jest.mock('rehype-stringify', () => jest.fn());
+// Mock vscode modules
+jest.mock('vscode', () => {
+    const original = jest.requireActual('vscode');
+    return {
+        ...original,
+        window: {
+            ...original.window,
+            showErrorMessage: jest.fn(),
+            showInformationMessage: jest.fn(),
+            showWarningMessage: jest.fn(),
+            showInputBox: jest.fn().mockResolvedValue(undefined),
+            createOutputChannel: jest.fn(),
+            withProgress: jest.fn((_, cb) => cb()),
+            createWebviewPanel: jest.fn(),
+        },
+        commands: {
+            registerCommand: jest.fn(),
+            executeCommand: jest.fn(),
+        },
+        env: {
+            openExternal: jest.fn(),
+            clipboard: {
+                writeText: jest.fn(),
+            },
+        },
+        Uri: {
+            file: jest.fn((path) => ({ path })),
+            parse: jest.fn(),
+        },
+    };
+});
 const vscode = __importStar(require("vscode"));
 const extension_1 = require("./extension");
 describe('extension', () => {
@@ -90,10 +121,10 @@ describe('extension', () => {
     });
     it('should activate without error', async () => {
         await expect((0, extension_1.activate)(mockContext)).resolves.not.toThrow();
-        // Should have registered all 4 commands
-        expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(4);
-        // Output channel plus 4 commands should be pushed to subscriptions
-        expect(mockContext.subscriptions).toHaveLength(5);
+        // Should have registered all 5 commands
+        expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(5);
+        // Output channel plus 5 commands should be pushed to subscriptions
+        expect(mockContext.subscriptions).toHaveLength(6);
         // Get all the command callbacks and invoke them to get coverage
         const registerCommandCalls = vscode.commands.registerCommand.mock.calls;
         // Test preview command with no active editor
@@ -102,16 +133,21 @@ describe('extension', () => {
         expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('No active editor');
         // Since no active editor, updatePreviewAuthStatus shouldn't error
         expect(previewCallback).not.toThrow();
-        // Test login command - should create webview
+        // Test login command - should open webview panel
         const loginCallback = registerCommandCalls[1][1];
         loginCallback();
         expect(vscode.window.createWebviewPanel).toHaveBeenCalled();
+        // Should not throw even though fetch will fail in mock
         // Test logout command - should clear auth and show message
         const logoutCallback = registerCommandCalls[2][1];
         logoutCallback();
         expect(vscode.window.showInformationMessage).toHaveBeenCalled();
+        // Test input cookie command - should show input box
+        const inputCookieCallback = registerCommandCalls[3][1];
+        inputCookieCallback();
+        // Should not throw even when user cancels
         // Test upload command with no active editor
-        const uploadCallback = registerCommandCalls[3][1];
+        const uploadCallback = registerCommandCalls[4][1];
         uploadCallback();
         expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('No active editor');
     });

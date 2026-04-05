@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.2.2 (2026-04-05)
+
+- 🐛 Fix: `invalid session` error when creating draft - token extraction failed because Node.js request doesn't share browser session
+- ✨ Add **Automatic Login**: now `Login WeChat Official Accounts` opens VSCode Webview directly, you scan QR and login completes automatically (no manual cookie copy needed!)
+- ✨ Add **Manual Cookie Input** command as fallback
+- 🔐 This guarantees the plugin uses the same authenticated session as your browser
+- 🔧 Improve token extraction: added two more regex patterns to handle newer WeChat MP pages
+- 🐛 Fix: `参数错误 (200002)` when creating draft - moved `f=json` to URL query params to match WeChat API expectations
+
 ## 0.2.0 (2026-04-05)
 
 - ✨ Add extension icon (WeChat green theme with document + upload arrow)

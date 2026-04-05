@@ -108,26 +108,105 @@ async function activate(context) {
         disposable = vscode.commands.registerCommand('wechat-publisher.loginWeChat', async () => {
             log('Command invoked: wechat-publisher.loginWeChat');
             log(`Current weChatService: ${!!weChatService}, context: ${!!context}`);
-            // Open WeChat MP login page in external browser
-            // Because WeChat blocks iframe embedding, this avoids QR code loading failure
-            const loginUrl = vscode.Uri.parse('https://mp.weixin.qq.com/');
-            await vscode.env.openExternal(loginUrl);
-            log('Opened login page in external browser');
-            // Ask user to confirm after login
-            const confirm = await vscode.window.showInformationMessage('Please login in the opened browser, then come back and click Confirm', {}, 'Confirm Login');
-            if (confirm === 'Confirm Login') {
-                log('User confirmed login, checking authentication...');
-                const result = await weChatService.checkAuth();
-                if (result.isAuthenticated) {
-                    vscode.window.showInformationMessage(`Logged in as ${result.authInfo?.nickName}`);
-                    log(`Login successful for user: ${result.authInfo?.nickName}`);
-                    updatePreviewAuthStatus();
-                }
-                else {
-                    vscode.window.showErrorMessage('Login failed. Please login again in browser and try Confirm.');
-                    log('Login check failed', 'error');
-                }
+            // Open WeChat MP login page in VSCode Webview for automatic cookie capture
+            const panel = vscode.window.createWebviewPanel('wechatLogin', 'WeChat Login', vscode.ViewColumn.One, {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+            });
+            log('Opened login webview');
+            // Inject script that will automatically send cookies back when login completes
+            const injectedScript = `
+<script>
+let lastUrl = '';
+let checkCount = 0;
+const maxChecks = 600; // 5 minutes max (500ms interval)
+
+function checkAndSendCookies() {
+  // Check if we're logged in (page contains token/user info)
+  const html = document.documentElement.innerHTML;
+  if (html.includes('token') && (html.includes('user_name') || html.includes('userName'))) {
+    // We're logged in, send cookies back
+    const cookies = document.cookie;
+    console.log('Login detected, sending cookies...');
+    window.vscode.postMessage({
+      type: 'loginComplete',
+      cookies: cookies
+    });
+    return true;
+  }
+  checkCount++;
+  if (checkCount >= maxChecks) {
+    window.vscode.postMessage({
+      type: 'loginTimeout',
+      message: 'Login timeout. Please try again.'
+    });
+    return true;
+  }
+  return false;
+}
+
+// Poll for login completion
+setInterval(() => {
+  if (!checkAndSendCookies()) {
+    // Check again later
+  }
+}, 500);
+</script>
+`;
+            // Get the page HTML with injected script
+            try {
+                const response = await fetch('https://mp.weixin.qq.com/', {
+                    method: 'GET',
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    },
+                });
+                let html = await response.text();
+                // Inject our script before </body>
+                html = html.replace('</body>', `${injectedScript}</body>`);
+                // Update CSP to allow everything
+                html = html.replace(/<meta[^>]*http-equiv="Content-Security-Policy"[^>]*>/, '');
+                panel.webview.html = html;
+                log('Login page loaded in webview');
             }
+            catch (error) {
+                panel.webview.html = `<html><body><h1>Failed to load login page</h1><p>${error}</p></body></html>`;
+                log('Failed to load login page', 'error');
+                log(String(error), 'error');
+                return;
+            }
+            // Handle messages from webview
+            panel.webview.onDidReceiveMessage(async (message) => {
+                if (message.type === 'loginComplete') {
+                    log('Login complete received from webview, cookies length: ${message.cookies?.length}');
+                    // Parse cookie string into array
+                    const cookieStr = message.cookies;
+                    const cookies = cookieStr.split(';').map(c => c.trim()).filter(c => c);
+                    if (cookies.length === 0) {
+                        vscode.window.showErrorMessage('No cookies found after login. Please try again.');
+                        panel.dispose();
+                        return;
+                    }
+                    log(`Parsed ${cookies.length} cookies from webview`);
+                    // Check auth with these cookies
+                    const result = await weChatService.checkAuthWithCookies(cookies);
+                    if (result.isAuthenticated && result.authInfo) {
+                        vscode.window.showInformationMessage(`Logged in automatically as ${result.authInfo.nickName || 'user'}`);
+                        log(`Automatic login successful for user: ${result.authInfo.nickName}`);
+                        updatePreviewAuthStatus();
+                        panel.dispose();
+                    }
+                    else {
+                        vscode.window.showErrorMessage('Automatic login failed. Please try Manual Cookie Input.');
+                        log('Automatic login check failed', 'error');
+                    }
+                }
+                else if (message.type === 'loginTimeout') {
+                    vscode.window.showErrorMessage(message.message);
+                    log('Login timeout', 'warn');
+                    panel.dispose();
+                }
+            });
         });
         context.subscriptions.push(disposable);
         log(`Command registered: wechat-publisher.loginWeChat, disposable: ${!!disposable}`);
@@ -140,6 +219,42 @@ async function activate(context) {
         });
         context.subscriptions.push(disposable);
         log('Command registered: wechat-publisher.logoutWeChat');
+        disposable = vscode.commands.registerCommand('wechat-publisher.inputCookieWeChat', async () => {
+            log('Command invoked: wechat-publisher.inputCookieWeChat');
+            const cookieInput = await vscode.window.showInputBox({
+                prompt: 'Paste your cookie from browser (after logging into mp.weixin.qq.com)',
+                placeHolder: 'cookie1=value1; cookie2=value2; ...',
+                ignoreFocusOut: true,
+            });
+            if (!cookieInput) {
+                log('Cookie input cancelled');
+                return;
+            }
+            // Parse the cookie string into individual cookies (each becomes a set-cookie entry)
+            const cookies = cookieInput.split(';').map(c => c.trim()).filter(c => c).map(c => {
+                // Each cookie entry becomes a full set-cookie line like "name=value; ..."
+                return c.includes('=') ? c : '';
+            }).filter(c => c);
+            if (cookies.length === 0) {
+                vscode.window.showErrorMessage('No valid cookies found. Please paste in format: name1=value1; name2=value2');
+                log('No valid cookies parsed from input', 'error');
+                return;
+            }
+            log(`Parsed ${cookies.length} cookies from input`);
+            // Now that we have the user's browser cookies, do the auth check
+            const result = await weChatService.checkAuthWithCookies(cookies);
+            if (result.isAuthenticated && result.authInfo) {
+                vscode.window.showInformationMessage(`Logged in as ${result.authInfo.nickName || 'user'}`);
+                log(`Login successful with manual cookie input`);
+                updatePreviewAuthStatus();
+            }
+            else {
+                vscode.window.showErrorMessage('Login failed. Please check your cookie and try again.');
+                log('Login check failed with manual cookie input', 'error');
+            }
+        });
+        context.subscriptions.push(disposable);
+        log('Command registered: wechat-publisher.inputCookieWeChat');
         disposable = vscode.commands.registerCommand('wechat-publisher.uploadToWeChat', async () => {
             log('Command invoked: wechat-publisher.uploadToWeChat');
             const editor = vscode.window.activeTextEditor;

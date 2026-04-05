@@ -2,7 +2,7 @@
   "name": "multipost",
   "displayName": "MultiPost - WeChat Publisher",
   "description": "Publish Markdown directly to WeChat Official Accounts from VSCode",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "publisher": "cygnus",
   "icon": "media/icon.png",
   "repository": {
@@ -58,6 +58,10 @@
       {
         "command": "wechat-publisher.logoutWeChat",
         "title": "Logout WeChat Official Accounts"
+      },
+      {
+        "command": "wechat-publisher.inputCookieWeChat",
+        "title": "Input Cookie for WeChat Official Accounts (Manual Login)"
       }
     ]
   },

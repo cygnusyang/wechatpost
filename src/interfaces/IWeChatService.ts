@@ -30,6 +30,11 @@ export interface IWeChatService {
   checkAuth(): Promise<{ isAuthenticated: boolean; authInfo?: WeChatAuthInfo }>;
 
   /**
+   * Check authentication with user-provided cookies from browser
+   */
+  checkAuthWithCookies(userCookies: string[]): Promise<{ isAuthenticated: boolean; authInfo?: WeChatAuthInfo }>;
+
+  /**
    * Upload image buffer to WeChat media server
    */
   uploadImage(buffer: Buffer, filename: string): Promise<WeChatUploadResult>;
