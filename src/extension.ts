@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { WeChatService } from './services/WeChatService';
 import { PreviewService } from './services/PreviewService';
 import { SettingsService } from './services/SettingsService';
+import { ChromeCDPService } from './services/ChromeCDPService';
 import { extractTitle } from './utils/extractTitle';
 
 let weChatService: WeChatService;
@@ -277,6 +278,47 @@ setInterval(() => {
     );
     context.subscriptions.push(disposable);
     log('Command registered: wechat-publisher.inputCookieWeChat');
+
+    // Chrome CDP Automated Login
+    const chromeCdpService = new ChromeCDPService(outputChannel);
+    disposable = vscode.commands.registerCommand(
+      'wechat-publisher.loginWeChatChromeCdp',
+      async () => {
+        log('Command invoked: wechat-publisher.loginWeChatChromeCdp');
+
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Starting Chrome for automated login...',
+            cancellable: false,
+          },
+          async () => {
+            try {
+              log('Starting Chrome CDP automated login');
+              const cookies = await chromeCdpService.startLoginFlow();
+              log(`Got ${cookies.length} cookies from Chrome CDP login`);
+
+              // Validate cookies with existing WeChatService method
+              const result = await weChatService.checkAuthWithCookies(cookies);
+              if (result.isAuthenticated && result.authInfo) {
+                vscode.window.showInformationMessage(`Automated login successful as ${result.authInfo.nickName || 'user'}`);
+                log(`Chrome CDP login successful for user: ${result.authInfo.nickName}`);
+                updatePreviewAuthStatus();
+              } else {
+                vscode.window.showErrorMessage('Automated login failed. Please try Manual Cookie Input.');
+                log('Chrome CDP login authentication check failed', 'error');
+              }
+            } catch (error) {
+              const errorMsg = error instanceof Error ? error.message : String(error);
+              vscode.window.showErrorMessage(`Chrome CDP login failed: ${errorMsg}`);
+              log(`Chrome CDP login error: ${errorMsg}`, 'error');
+            }
+          }
+        );
+      }
+    );
+    context.subscriptions.push(disposable);
+    log('Command registered: wechat-publisher.loginWeChatChromeCdp');
 
     disposable = vscode.commands.registerCommand(
       'wechat-publisher.uploadToWeChat',

@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.3.0 (2026-04-05)
+
+- ✨ New Feature: **Chrome CDP (Puppeteer) Fully Automated Login** - Add third login method that automatically launches Chrome browser, lets you scan QR code, and extracts cookies automatically. This solves the QR code display issue in VSCode webview (WeChat blocks QR in iframes).
+- 🔒 Uses Chrome DevTools Protocol via Puppeteer for reliable browser automation
+- 🤖 Fully automatic - just run the command, scan QR, done! No manual cookie copying needed
+- 👉 New command: `Login WeChat via Chrome CDP (Fully Automated)` in command palette
+- 👍 Backward compatible - existing webview login and manual cookie input still work
+
 ## 0.2.4 (2026-04-05)
 
 - 🐛 Fix: **Draft creation reports failure when actually succeeded** - incorrect success checking logic. WeChat API returns `base_resp.ret = 0` for success (not `err_msg = "ok"`), so add proper success condition check.
