@@ -45,3 +45,6 @@ pnpm-debug.log*
 
 # TypeScript
 tsconfig.tsbuildinfo
+
+# Kilo
+.kilo/
