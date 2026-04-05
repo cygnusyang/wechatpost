@@ -406,7 +406,13 @@ export class WeChatService implements IWeChatService {
       const result: any = await response.json();
       this.log(`Draft creation response: ${JSON.stringify(result)}`);
 
-      if (result.errmsg === 'ok' || result.base_resp?.err_msg === 'ok') {
+      // WeChat API success: base_resp.ret === 0 means success, err_msg may be empty
+      const isSuccess = result.errmsg === 'ok' ||
+                       (result.base_resp && result.base_resp.ret === 0) ||
+                       result.base_resp?.err_msg === 'ok' ||
+                       result.ret === 0;
+
+      if (isSuccess) {
         const appMsgId = result.appMsgId || result.appmsgid;
         const draftUrl = `https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&type=77&appmsgid=${appMsgId}&token=${this.authInfo.token}&lang=zh_CN`;
         this.log(`Draft created successfully: appMsgId=${appMsgId}`);

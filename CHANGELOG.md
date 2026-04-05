@@ -1,5 +1,9 @@
 # Change Log
 
+## 0.2.4 (2026-04-05)
+
+- 🐛 Fix: **Draft creation reports failure when actually succeeded** - incorrect success checking logic. WeChat API returns `base_resp.ret = 0` for success (not `err_msg = "ok"`), so add proper success condition check.
+
 ## 0.2.3 (2026-04-05)
 
 - 🐛 Fix: **Stuck in "Activating" forever** - `.vscodeignore` was excluding all `node_modules` except `canvas`, causing `Cannot find module 'node-fetch'` error on activation. Now includes all production dependencies in VSIX.
