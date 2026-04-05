@@ -50,7 +50,7 @@ export async function activate(context: vscode.ExtensionContext) {
     previewService.setMessageHandler(async (message) => {
       log(`Received message from preview webview: ${message.type}`);
       if (message.type === 'uploadToWeChat') {
-        await vscode.commands.executeCommand('wechat-publisher.uploadToWeChat');
+        await vscode.commands.executeCommand('multipost.uploadToWeChat');
       } else if (message.type === 'copyHtml') {
         await vscode.env.clipboard.writeText(message.html);
         vscode.window.showInformationMessage('HTML copied to clipboard');
@@ -63,9 +63,9 @@ export async function activate(context: vscode.ExtensionContext) {
     
     // Register commands
     let disposable = vscode.commands.registerCommand(
-      'wechat-publisher.preview',
+      'multipost.preview',
       () => {
-        log('Command invoked: wechat-publisher.preview');
+        log('Command invoked: multipost.preview');
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
           vscode.window.showErrorMessage('No active editor');
@@ -80,25 +80,25 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     );
     context.subscriptions.push(disposable);
-    log(`Command registered: wechat-publisher.preview, disposable: ${!!disposable}`);
+    log(`Command registered: multipost.preview, disposable: ${!!disposable}`);
 
     disposable = vscode.commands.registerCommand(
-      'wechat-publisher.logoutWeChat',
+      'multipost.logoutWeChat',
       async () => {
-        log('Command invoked: wechat-publisher.logoutWeChat');
+        log('Command invoked: multipost.logoutWeChat');
         weChatService.clearAuth();
-        vscode.window.showInformationMessage('Logged out from WeChat');
+        vscode.window.showInformationMessage('Logged out from MultiPost');
         updatePreviewAuthStatus();
         log('User logged out successfully');
       }
     );
     context.subscriptions.push(disposable);
-    log('Command registered: wechat-publisher.logoutWeChat');
+    log('Command registered: multipost.logoutWeChat');
 
     disposable = vscode.commands.registerCommand(
-      'wechat-publisher.inputCookieWeChat',
+      'multipost.inputCookieWeChat',
       async () => {
-        log('Command invoked: wechat-publisher.inputCookieWeChat');
+        log('Command invoked: multipost.inputCookieWeChat');
 
         const cookieInput = await vscode.window.showInputBox({
           prompt: 'Paste your cookie from browser (after logging into mp.weixin.qq.com)',
@@ -138,13 +138,13 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     );
     context.subscriptions.push(disposable);
-    log('Command registered: wechat-publisher.inputCookieWeChat');
+    log('Command registered: multipost.inputCookieWeChat');
 
     // Chrome CDP Automated Login
     disposable = vscode.commands.registerCommand(
-      'wechat-publisher.loginWeChatChromeCdp',
+      'multipost.loginWeChatChromeCdp',
       async () => {
-        log('Command invoked: wechat-publisher.loginWeChatChromeCdp');
+        log('Command invoked: multipost.loginWeChatChromeCdp');
 
         await vscode.window.withProgress(
           {
@@ -178,12 +178,12 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     );
     context.subscriptions.push(disposable);
-    log('Command registered: wechat-publisher.loginWeChatChromeCdp');
+    log('Command registered: multipost.loginWeChatChromeCdp');
 
     disposable = vscode.commands.registerCommand(
-      'wechat-publisher.uploadToWeChat',
+      'multipost.uploadToWeChat',
       async () => {
-        log('Command invoked: wechat-publisher.uploadToWeChat');
+        log('Command invoked: multipost.uploadToWeChat');
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
           vscode.window.showErrorMessage('No active editor');
@@ -285,7 +285,7 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     );
     context.subscriptions.push(disposable);
-    log('Command registered: wechat-publisher.uploadToWeChat');
+    log('Command registered: multipost.uploadToWeChat');
 
     log('All commands registered successfully');
 

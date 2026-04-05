@@ -38,15 +38,15 @@
     },
     "commands": [
       {
-        "command": "wechat-publisher.preview",
-        "title": "Preview WeChat Format",
+        "command": "multipost.preview",
+        "title": "Preview MultiPost Format",
         "icon": {
           "light": "media/icons/preview-light.svg",
           "dark": "media/icons/preview-dark.svg"
         }
       },
       {
-        "command": "wechat-publisher.uploadToWeChat",
+        "command": "multipost.uploadToWeChat",
         "title": "Upload to WeChat Official Accounts",
         "icon": {
           "light": "media/icons/upload-light.svg",
@@ -54,16 +54,16 @@
         }
       },
       {
-        "command": "wechat-publisher.loginWeChatChromeCdp",
-        "title": "Login WeChat (Fully Automated with Chrome)"
+        "command": "multipost.loginWeChatChromeCdp",
+        "title": "Login MultiPost (Fully Automated with Chrome)"
       },
       {
-        "command": "wechat-publisher.inputCookieWeChat",
+        "command": "multipost.inputCookieWeChat",
         "title": "Input Cookie (Manual Login)"
       },
       {
-        "command": "wechat-publisher.logoutWeChat",
-        "title": "Logout WeChat"
+        "command": "multipost.logoutWeChat",
+        "title": "Logout MultiPost"
       }
     ]
   },
