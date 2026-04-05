@@ -32,9 +32,9 @@ export class ChromeCDPService {
 
   /**
    * First-time login flow - launch Chrome, let user scan QR, extract cookies
-   * @returns Array of cookie strings in format "name=value"
+   * @returns Array of full cookie objects from Puppeteer
    */
-  async startFirstTimeLogin(): Promise<string[]> {
+  async startFirstTimeLogin(): Promise<CookieParam[]> {
     this.log('Starting first-time login flow');
 
     const browser = await puppeteer.launch({
@@ -75,14 +75,11 @@ export class ChromeCDPService {
       const cookies = await page.cookies(page.url());
       this.log(`Extracted ${cookies.length} cookies from Chrome`);
 
-      // Format cookies into the expected format "name=value"
-      const cookieStrings = cookies.map(cookie => `${cookie.name}=${cookie.value}`);
-
       // Keep browser open for authenticated session
       this.authenticatedPage = page;
       this.log('Login flow completed, browser kept open for authenticated operations');
 
-      return cookieStrings;
+      return cookies;
     } catch (error) {
       this.log(`Error during login flow: ${error}`, 'error');
       await this.close();
@@ -92,10 +89,10 @@ export class ChromeCDPService {
 
   /**
    * Start an authenticated session with existing cookies from local storage
-   * @param cookieStrings Array of cookie strings in format "name=value"
+   * @param cookies Array of full CookieParam objects extracted from Chrome
    */
-  async startAuthenticatedSession(cookieStrings: string[]): Promise<void> {
-    this.log(`Starting authenticated session with ${cookieStrings.length} saved cookies`);
+  async startAuthenticatedSession(cookies: CookieParam[]): Promise<void> {
+    this.log(`Starting authenticated session with ${cookies.length} saved cookies`);
 
     // If we already have an active connected browser session, reuse it
     if (this.browser && this.browser.connected && this.authenticatedPage) {
@@ -120,29 +117,7 @@ export class ChromeCDPService {
       }
     }
 
-    // Parse cookie strings into Puppeteer CookieParam objects
-    // expires: set to 1 year from now to keep the cookie valid for a long time
-    const oneYearFromNow = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
-    const cookies: CookieParam[] = cookieStrings
-      .map(cookieStr => {
-        const [name, value] = cookieStr.split('=', 2);
-        // Skip invalid cookies that don't have name=value format
-        if (!name || value === undefined) {
-          this.log(`Skipping invalid cookie: ${cookieStr}`, 'warn');
-          return null;
-        }
-        return {
-          name,
-          value,
-          domain: '.mp.weixin.qq.com',
-          path: '/',
-          expires: oneYearFromNow,
-          httpOnly: false,
-          secure: true,
-          sameSite: 'Lax',
-        } as CookieParam;
-      })
-      .filter((cookie): cookie is CookieParam => cookie !== null);
+    // Cookies are already full CookieParam objects from storage (saved when extracted from Chrome)
 
     this.browser = await puppeteer.launch({
       headless: false,

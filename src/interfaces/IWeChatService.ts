@@ -1,5 +1,7 @@
 // WeChat service interface
 
+import type { CookieParam } from 'puppeteer';
+
 export interface WeChatAuthInfo {
   token: string;
   ticket: string;
@@ -7,7 +9,7 @@ export interface WeChatAuthInfo {
   nickName: string;
   svrTime: number;
   avatar: string;
-  cookies: string[];
+  cookies: CookieParam[];
 }
 
 export interface WeChatUploadResult {

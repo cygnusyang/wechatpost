@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { IWeChatService, WeChatAuthInfo, WeChatUploadResult, WeChatDraftResult } from '../interfaces/IWeChatService';
 import fetch from 'node-fetch';
 import FormData from 'form-data';
+import type { CookieParam } from 'puppeteer';
 
 const STORAGE_KEY = 'wechat-publisher.auth';
 const STORAGE_LOAD_TIMEOUT_MS = 1500;
@@ -112,11 +113,34 @@ export class WeChatService implements IWeChatService {
     }
   }
 
-  async checkAuthWithCookies(userCookies: string[]): Promise<{ isAuthenticated: boolean; authInfo?: WeChatAuthInfo }> {
+  async checkAuthWithCookies(
+    userCookies: string[] | CookieParam[]
+  ): Promise<{ isAuthenticated: boolean; authInfo?: WeChatAuthInfo }> {
     this.log('Starting WeChat auth check with user-provided cookies...');
     this.showOutputChannel();
 
     try {
+      // Convert input to CookieParam array for storage
+      const oneYearFromNow = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
+      const cookieParams: CookieParam[] = userCookies.map(cookie => {
+        if (typeof cookie === 'string') {
+          // Manual input: "name=value" -> convert to CookieParam
+          const [name, value] = cookie.split('=', 2);
+          return {
+            name,
+            value,
+            domain: '.mp.weixin.qq.com',
+            path: '/',
+            expires: oneYearFromNow,
+            httpOnly: false,
+            secure: true,
+            sameSite: 'Lax',
+          } as CookieParam;
+        }
+        // CDP login: already full CookieParam from Puppeteer
+        return cookie;
+      }).filter(cookie => !!cookie.name && cookie.value !== undefined);
+
       // Create temporary auth with user's cookies
       const tempAuth: WeChatAuthInfo = {
         token: '',
@@ -125,11 +149,11 @@ export class WeChatService implements IWeChatService {
         nickName: '',
         svrTime: Date.now() / 1000,
         avatar: '',
-        cookies: userCookies,
+        cookies: cookieParams,
       };
 
       const headers = this.getRequestHeaders(tempAuth);
-      this.log(`Sending request with ${userCookies.length} user cookies`, 'info');
+      this.log(`Sending request with ${cookieParams.length} user cookies`, 'info');
 
       const response = await fetch('https://mp.weixin.qq.com/', {
         method: 'GET',
@@ -142,8 +166,12 @@ export class WeChatService implements IWeChatService {
       // If extraction successful, merge user cookies into the result
       if (result.isAuthenticated && result.authInfo) {
         // Combine user-provided cookies with any new cookies from response
-        const combinedCookies = [...userCookies, ...(result.authInfo.cookies || [])];
-        result.authInfo.cookies = combinedCookies;
+        const combinedCookies = [...cookieParams, ...(result.authInfo.cookies || [])];
+        // Deduplicate by cookie name (keep last one in case of overlap)
+        const deduped = Array.from(
+          new Map(combinedCookies.map(c => [c.name, c])).values()
+        );
+        result.authInfo.cookies = deduped;
         this.authInfo = result.authInfo;
         await this.saveAuthInfo(result.authInfo);
       }
@@ -244,8 +272,25 @@ export class WeChatService implements IWeChatService {
       /headImg\s*[=:]\s*["']([^"']+)["']/,
     ]);
 
-    const cookies = response.headers.raw()['set-cookie'] || [];
-    this.log(`Cookies received: ${cookies.length} cookies`);
+    const setCookieHeaders = response.headers.raw()['set-cookie'] || [];
+    this.log(`Cookies received: ${setCookieHeaders.length} cookies`);
+
+    // Convert set-cookie headers to CookieParam objects
+    const oneYearFromNow = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
+    const cookies: CookieParam[] = setCookieHeaders.map(cookieHeader => {
+      // Parse name=value from beginning of set-cookie header
+      const [nameValue] = cookieHeader.split(';');
+      const [name, value] = nameValue.split('=', 2);
+      return {
+        name,
+        value,
+        domain: '.mp.weixin.qq.com',
+        path: '/',
+        expires: oneYearFromNow,
+        httpOnly: cookieHeader.toLowerCase().includes('httponly'),
+        secure: cookieHeader.toLowerCase().includes('secure'),
+      };
+    }).filter(cookie => !!cookie.name && cookie.value !== undefined);
 
     const newAuthInfo: WeChatAuthInfo = {
       token: token,
@@ -440,7 +485,7 @@ export class WeChatService implements IWeChatService {
 
     if (targetAuth?.cookies) {
       headers['Cookie'] = targetAuth.cookies
-        .map(cookie => cookie.split(';')[0])
+        .map(cookie => `${cookie.name}=${cookie.value}`)
         .join('; ');
     }
 
