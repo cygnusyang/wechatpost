@@ -97,16 +97,26 @@ export class ChromeCDPService {
   async startAuthenticatedSession(cookieStrings: string[]): Promise<void> {
     this.log(`Starting authenticated session with ${cookieStrings.length} saved cookies`);
 
-    // Close any existing browser session before starting a new one
+    // If we already have an active connected browser session, reuse it
+    if (this.browser && this.browser.connected && this.authenticatedPage) {
+      this.log('Reusing existing active browser session');
+      return;
+    }
+
+    // If we get here, either browser is closed or disconnected - need to start a new one
+    this.log('No active browser session, starting new');
+
+    // Clean up any existing browser object
     if (this.browser) {
       try {
-        // Check if browser is still connected before trying to close
-        if (this.browser.connected) {
-          this.log('Closing existing browser session');
-          await this.browser.close();
+        if (!this.browser.connected) {
+          this.browser = null;
+          this.authenticatedPage = null;
         }
       } catch (error) {
-        this.log(`Error closing existing browser: ${error}`, 'info');
+        this.log(`Error cleaning up disconnected browser: ${error}`, 'info');
+        this.browser = null;
+        this.authenticatedPage = null;
       }
     }
 
@@ -226,7 +236,7 @@ export class ChromeCDPService {
 
     // Wait for the rich text editor iframe to load
     await page.waitForSelector('#ueditor_iframe', { timeout: 10000 });
-    const frame = await page.frames().find(f => f.url().includes('ueditor'));
+    const frame = page.frames().find(f => f.url().includes('ueditor'));
 
     if (!frame) {
       throw new Error('Could not find editor iframe');
