@@ -2,8 +2,12 @@
   "name": "multipost",
   "displayName": "MultiPost - WeChat Publisher",
   "description": "Publish Markdown directly to WeChat Official Accounts from VSCode",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "publisher": "cygnus",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cygnus/MultiPost.git"
+  },
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -20,6 +24,21 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "MultiPost",
+      "properties": {
+        "wechatPublisher.defaultAuthor": {
+          "type": "string",
+          "default": "",
+          "description": "Default author name used when creating a WeChat draft."
+        },
+        "wechatPublisher.autoOpenDraftAfterPublish": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open the created WeChat draft in the browser after upload."
+        }
+      }
+    },
     "commands": [
       {
         "command": "wechat-publisher.preview",

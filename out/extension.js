@@ -40,7 +40,6 @@ const WeChatService_1 = require("./services/WeChatService");
 const PreviewService_1 = require("./services/PreviewService");
 const SettingsService_1 = require("./services/SettingsService");
 const extractTitle_1 = require("./utils/extractTitle");
-const processMarkdown_1 = require("./utils/processMarkdown");
 let weChatService;
 let previewService;
 let settingsService;
@@ -63,6 +62,11 @@ async function activate(context) {
     outputChannel = vscode.window.createOutputChannel('MultiPost');
     context.subscriptions.push(outputChannel);
     log('=== Starting MultiPost extension activation ===');
+    log(`Extension context: ${JSON.stringify({
+        extensionPath: context.extensionPath,
+        subscriptionsCount: context.subscriptions.length,
+        extensionUri: context.extensionUri.toString()
+    })}`);
     try {
         log('Step 1: Initializing services...');
         // Initialize services
@@ -70,11 +74,19 @@ async function activate(context) {
         previewService = new PreviewService_1.PreviewService(context.extensionUri);
         settingsService = new SettingsService_1.SettingsService(context);
         log('Services initialized successfully');
-        // Load saved auth
-        log('Step 2: Loading saved authentication from storage...');
-        await weChatService.loadAuthFromStorage();
-        log('Saved auth loaded');
-        log('Step 3: Registering commands...');
+        previewService.setMessageHandler(async (message) => {
+            log(`Received message from preview webview: ${message.type}`);
+            if (message.type === 'uploadToWeChat') {
+                await vscode.commands.executeCommand('wechat-publisher.uploadToWeChat');
+            }
+            else if (message.type === 'copyHtml') {
+                await vscode.env.clipboard.writeText(message.html);
+                vscode.window.showInformationMessage('HTML copied to clipboard');
+                log('HTML copied to clipboard');
+            }
+        });
+        log('Step 2: Registering commands...');
+        log(`Available vscode.commands: ${typeof vscode.commands}`);
         // Register commands
         let disposable = vscode.commands.registerCommand('wechat-publisher.preview', () => {
             log('Command invoked: wechat-publisher.preview');
@@ -91,38 +103,20 @@ async function activate(context) {
             log('Preview opened successfully');
         });
         context.subscriptions.push(disposable);
-        log('Command registered: wechat-publisher.preview');
+        log(`Command registered: wechat-publisher.preview, disposable: ${!!disposable}`);
+        log('Registering loginWeChat command...');
         disposable = vscode.commands.registerCommand('wechat-publisher.loginWeChat', async () => {
             log('Command invoked: wechat-publisher.loginWeChat');
-            const panel = vscode.window.createWebviewPanel('wechatLogin', 'WeChat Login', vscode.ViewColumn.One, {
-                enableScripts: true,
-            });
-            panel.webview.html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>WeChat Login</title>
-  <style>
-    body { margin: 0; padding: 16px; }
-    .container { max-width: 400px; margin: 0 auto; text-align: center; }
-    h2 { margin-bottom: 16px; }
-    p { color: #666; }
-    iframe { width: 100%; height: 600px; border: 1px solid #eee; border-radius: 8px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h2>Scan QR Code to Login</h2>
-    <p>Please scan the QR code below using WeChat to login</p>
-    <iframe src="https://mp.weixin.qq.com/"></iframe>
-  </div>
-</body>
-</html>
-      `;
-            // After login, check auth
-            panel.onDidDispose(async () => {
-                log('Login window closed, checking authentication...');
+            log(`Current weChatService: ${!!weChatService}, context: ${!!context}`);
+            // Open WeChat MP login page in external browser
+            // Because WeChat blocks iframe embedding, this avoids QR code loading failure
+            const loginUrl = vscode.Uri.parse('https://mp.weixin.qq.com/');
+            await vscode.env.openExternal(loginUrl);
+            log('Opened login page in external browser');
+            // Ask user to confirm after login
+            const confirm = await vscode.window.showInformationMessage('Please login in the opened browser, then come back and click Confirm', {}, 'Confirm Login');
+            if (confirm === 'Confirm Login') {
+                log('User confirmed login, checking authentication...');
                 const result = await weChatService.checkAuth();
                 if (result.isAuthenticated) {
                     vscode.window.showInformationMessage(`Logged in as ${result.authInfo?.nickName}`);
@@ -130,13 +124,13 @@ async function activate(context) {
                     updatePreviewAuthStatus();
                 }
                 else {
-                    vscode.window.showErrorMessage('Login failed. Please try again.');
+                    vscode.window.showErrorMessage('Login failed. Please login again in browser and try Confirm.');
                     log('Login check failed', 'error');
                 }
-            });
+            }
         });
         context.subscriptions.push(disposable);
-        log('Command registered: wechat-publisher.loginWeChat');
+        log(`Command registered: wechat-publisher.loginWeChat, disposable: ${!!disposable}`);
         disposable = vscode.commands.registerCommand('wechat-publisher.logoutWeChat', async () => {
             log('Command invoked: wechat-publisher.logoutWeChat');
             weChatService.clearAuth();
@@ -181,7 +175,9 @@ async function activate(context) {
             }, async () => {
                 try {
                     log('Starting markdown processing and upload...');
-                    const { html, errors } = await (0, processMarkdown_1.processMarkdownForUpload)(markdown, weChatService);
+                    const processMarkdownModule = await Promise.resolve().then(() => __importStar(require('./utils/processMarkdown')));
+                    const { processMarkdownForUpload } = processMarkdownModule;
+                    const { html, errors } = await processMarkdownForUpload(markdown, weChatService);
                     if (errors.length > 0) {
                         vscode.window.showWarningMessage(`Upload completed with ${errors.length} errors: ${errors[0]}`);
                         log(`Warnings during processing: ${errors.length} errors`, 'warn');
@@ -216,21 +212,13 @@ async function activate(context) {
         context.subscriptions.push(disposable);
         log('Command registered: wechat-publisher.uploadToWeChat');
         log('All commands registered successfully');
-        // Listen for messages from webview
-        const panel = previewService.getPanel();
-        if (panel) {
-            panel.webview.onDidReceiveMessage(async (message) => {
-                log(`Received message from preview webview: ${message.type}`);
-                if (message.type === 'uploadToWeChat') {
-                    await vscode.commands.executeCommand('wechat-publisher.uploadToWeChat');
-                }
-                else if (message.type === 'copyHtml') {
-                    await vscode.env.clipboard.writeText(message.html);
-                    vscode.window.showInformationMessage('HTML copied to clipboard');
-                    log('HTML copied to clipboard');
-                }
-            }, undefined, context.subscriptions);
-        }
+        log('Step 3: Loading saved authentication from storage in background...');
+        void weChatService.loadAuthFromStorage().then(() => {
+            log('Saved auth loaded');
+            updatePreviewAuthStatus();
+        }).catch((error) => {
+            log(`Background auth load failed: ${error.message}`, 'warn');
+        });
         log('=== MultiPost extension activation completed successfully ===');
     }
     catch (error) {

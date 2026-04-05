@@ -4,6 +4,7 @@ import fetch from 'node-fetch';
 import FormData from 'form-data';
 
 const STORAGE_KEY = 'wechat-publisher.auth';
+const STORAGE_LOAD_TIMEOUT_MS = 1500;
 
 export class WeChatService implements IWeChatService {
   private authInfo: WeChatAuthInfo | null = null;
@@ -34,7 +35,30 @@ export class WeChatService implements IWeChatService {
 
   async loadAuthFromStorage(): Promise<void> {
     this.log('Loading auth from storage...');
-    const stored = await this.secretStorage.get(STORAGE_KEY);
+    let stored: string | undefined;
+
+    try {
+      // Force resolve after timeout regardless of secret storage state
+      stored = await Promise.race([
+        Promise.resolve(this.secretStorage.get(STORAGE_KEY))
+          .catch((err: unknown) => {
+            this.log('Secret storage get failed: ' + String(err), 'error');
+            return undefined;
+          }),
+        new Promise<undefined>((resolve) => {
+          setTimeout(() => {
+            this.log('Secret storage read timed out after ' + STORAGE_LOAD_TIMEOUT_MS + 'ms', 'warn');
+            resolve(undefined);
+          }, STORAGE_LOAD_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (error) {
+      this.log('Failed to read auth from secret storage', 'error');
+      this.log(String(error), 'error');
+      this.authInfo = null;
+      return;
+    }
+
     if (stored) {
       try {
         this.authInfo = JSON.parse(stored);
@@ -45,7 +69,7 @@ export class WeChatService implements IWeChatService {
         this.authInfo = null;
       }
     } else {
-      this.log('No stored auth data found');
+      this.log('No stored auth data found or storage read timed out');
     }
   }
 

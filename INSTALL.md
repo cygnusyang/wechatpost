@@ -4,13 +4,13 @@
 
 ### 方法 1：从 VSIX 文件安装（推荐）
 
-扩展已经打包好了：`multipost-0.1.8.vsix`（生成后）
+扩展已经打包好了：`multipost-0.1.10.vsix`
 
 1. 打开 VSCode
 2. 打开扩展面板（Ctrl+Shift+X 或 Cmd+Shift+X）
 3. 点击右上角 `...` 菜单
 4. 选择 **"从 VSIX 安装..."**
-5. 选择文件：`multipost-0.1.8.vsix`
+5. 选择文件：`multipost-0.1.10.vsix`
 6. 重启 VSCode 生效
 
 ### 方法 2：开发模式运行
@@ -94,7 +94,7 @@ MultiPost/
 │   │   └── themes/         # 主题样式
 │   └── vite.config.ts      # Vite 配置
 ├── media/                  # 构建输出
-└── multipost-0.1.8.vsix    # 安装包
+└── multipost-0.1.10.vsix   # 安装包
 ```
 
 ## 开发

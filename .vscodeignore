@@ -1,8 +1,15 @@
 # Node dependencies
-node_modules/**
-# But keep production dependencies for canvas binaries
-!node_modules/canvas/**
-!node_modules/canvas/build/**
+# Don't exclude entire node_modules - we need all production dependencies for require to work
+# Only exclude unnecessary parts
+node_modules/.cache/**
+node_modules/*/node_modules/**
+node_modules/*/test/**
+node_modules/*/tests/**
+node_modules/*/*.md
+node_modules/*/*.yml
+node_modules/*/*.yaml
+# Keep all production dependencies (including canvas, node-fetch, etc.)
+!node_modules/**
 
 # Out of directory
 src/**
