@@ -34,7 +34,7 @@ export interface IWeChatService {
   /**
    * Check authentication with user-provided cookies from browser
    */
-  checkAuthWithCookies(userCookies: string[]): Promise<{ isAuthenticated: boolean; authInfo?: WeChatAuthInfo }>;
+  checkAuthWithCookies(userCookies: string[] | CookieParam[]): Promise<{ isAuthenticated: boolean; authInfo?: WeChatAuthInfo }>;
 
   /**
    * Upload image buffer to WeChat media server
