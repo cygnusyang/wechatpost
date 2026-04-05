@@ -1,8 +1,8 @@
 # MultiPost - WeChat Publisher
 
-VSCode 扩展，直接从 Markdown 发布文章到微信公众号。
+VS Code 扩展 - 将 Markdown 文件一键发布到微信公众号，支持 Mermaid 图表自动渲染上传，支持 Chrome CDP 全自动登录+发布。
 
-**当前版本**: **0.2.0**
+**当前版本**: **0.5.1**
 
 ## 功能特性
 
