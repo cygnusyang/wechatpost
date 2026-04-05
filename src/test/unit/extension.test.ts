@@ -129,8 +129,8 @@ describe('extension', () => {
 
   it('should activate without error', async () => {
     await expect(activate(mockContext)).resolves.not.toThrow();
-    expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(5);
-    expect(mockContext.subscriptions).toHaveLength(6);
+    expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(4);
+    expect(mockContext.subscriptions).toHaveLength(5);
   });
 
   it('should deactivate without error', () => {
@@ -168,54 +168,6 @@ describe('extension', () => {
     registeredCommands.get('multipost.preview')!();
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('No active editor');
-  });
-
-  it('should handle manual cookie login success', async () => {
-    await activate(mockContext);
-    (vscode.window.showInputBox as jest.Mock).mockResolvedValue('a=1; b=2');
-    mockWeChatService.checkAuthWithCookies.mockResolvedValue({
-      isAuthenticated: true,
-      authInfo: { nickName: 'Tester' },
-    });
-
-    await registeredCommands.get('multipost.inputCookieWeChat')!();
-
-    expect(mockWeChatService.checkAuthWithCookies).toHaveBeenCalledWith(['a=1', 'b=2']);
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Logged in as Tester');
-  });
-
-  it('should handle cancelled cookie input', async () => {
-    await activate(mockContext);
-    (vscode.window.showInputBox as jest.Mock).mockResolvedValue(undefined);
-
-    await registeredCommands.get('multipost.inputCookieWeChat')!();
-
-    expect(mockWeChatService.checkAuthWithCookies).not.toHaveBeenCalled();
-  });
-
-  it('should reject invalid cookie input', async () => {
-    await activate(mockContext);
-    (vscode.window.showInputBox as jest.Mock).mockResolvedValue('invalid-cookie');
-
-    await registeredCommands.get('multipost.inputCookieWeChat')!();
-
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'No valid cookies found. Please paste in format: name1=value1; name2=value2'
-    );
-  });
-
-  it('should show login failure for manual cookie input', async () => {
-    await activate(mockContext);
-    (vscode.window.showInputBox as jest.Mock).mockResolvedValue('a=1');
-    mockWeChatService.checkAuthWithCookies.mockResolvedValue({
-      isAuthenticated: false,
-    });
-
-    await registeredCommands.get('multipost.inputCookieWeChat')!();
-
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Login failed. Please check your cookie and try again.'
-    );
   });
 
   it('should show error when chrome cdp command runs without active editor', async () => {
@@ -268,32 +220,6 @@ describe('extension', () => {
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Login failed. Please try again.');
   });
 
-  it('should upload via API when authenticated and no CDP session exists', async () => {
-    await activate(mockContext);
-    (vscode.window as any).activeTextEditor = {
-      document: {
-        getText: () => '# Title',
-        fileName: '/tmp/demo.md',
-      },
-    };
-    mockWeChatService.getAuthInfo.mockReturnValue({ nickName: 'Tester' });
-    mockWeChatService.checkAuth.mockResolvedValue({ isAuthenticated: true });
-    mockWeChatService.createDraft.mockResolvedValue({
-      success: true,
-      draftUrl: 'https://example.com/draft',
-    });
-
-    await registeredCommands.get('multipost.uploadToWeChat')!();
-
-    expect(mockWeChatService.createDraft).toHaveBeenCalledWith(
-      'Extracted Title',
-      'Default Author',
-      '<p>rendered</p>',
-      'rendered'
-    );
-    expect(vscode.env.openExternal).toHaveBeenCalledWith('https://example.com/draft');
-  });
-
   it('should show error when upload runs without active editor', async () => {
     await activate(mockContext);
 
@@ -310,22 +236,6 @@ describe('extension', () => {
     expect(mockWeChatService.clearAuth).toHaveBeenCalled();
     expect(mockPreviewService.updateAuthStatus).toHaveBeenCalledWith(false, undefined);
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Logged out from MultiPost');
-  });
-
-  it('should show expired auth error during upload', async () => {
-    await activate(mockContext);
-    (vscode.window as any).activeTextEditor = {
-      document: {
-        getText: () => '# Title',
-        fileName: '/tmp/demo.md',
-      },
-    };
-    mockWeChatService.getAuthInfo.mockReturnValue({ nickName: 'Tester' });
-    mockWeChatService.checkAuth.mockResolvedValue({ isAuthenticated: false });
-
-    await registeredCommands.get('multipost.uploadToWeChat')!();
-
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Authentication expired. Please login again.');
   });
 
   it('should show login failure during upload after cdp login', async () => {
@@ -384,27 +294,7 @@ describe('extension', () => {
 
     await registeredCommands.get('multipost.uploadToWeChat')!();
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Upload failed: processor failed');
-  });
-
-  it('should show upload failure when api draft creation fails', async () => {
-    await activate(mockContext);
-    (vscode.window as any).activeTextEditor = {
-      document: {
-        getText: () => '# Title',
-        fileName: '/tmp/demo.md',
-      },
-    };
-    mockWeChatService.getAuthInfo.mockReturnValue({ nickName: 'Tester' });
-    mockWeChatService.checkAuth.mockResolvedValue({ isAuthenticated: true });
-    mockWeChatService.createDraft.mockResolvedValue({
-      success: false,
-      error: 'bad request',
-    });
-
-    await registeredCommands.get('multipost.uploadToWeChat')!();
-
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Upload failed: bad request');
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('CDP upload failed: processor failed');
   });
 
   it('should keep cdp session when already active during automated upload', async () => {

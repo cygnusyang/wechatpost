@@ -54,12 +54,12 @@
         }
       },
       {
-        "command": "multipost.loginWeChatChromeCdp",
-        "title": "CDP Fully Automated Upload"
+        "command": "multipost.uploadToWeChat",
+        "title": "Upload to WeChat Official Accounts (CDP Automated)"
       },
       {
-        "command": "multipost.inputCookieWeChat",
-        "title": "Input Cookie (Manual Login)"
+        "command": "multipost.loginWeChatChromeCdp",
+        "title": "CDP Fully Automated Upload"
       },
       {
         "command": "multipost.logoutWeChat",
