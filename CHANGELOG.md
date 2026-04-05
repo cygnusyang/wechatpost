@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.1.13 (2026-04-05)
+
+- 🐛 Fix: compile error after regex refactoring - variable names mismatch
+- ✅ Further improve regex robustness - 6 different patterns for token extraction
+- 📖 Add version information to README
+- 🏷️ Bump version to 0.1.13
+
 ## 0.1.12 (2026-04-05)
 
 - 🐛 Fix: failed to extract token after login - regex matched wrong position

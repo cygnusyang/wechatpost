@@ -2,7 +2,7 @@
   "name": "multipost",
   "displayName": "MultiPost - WeChat Publisher",
   "description": "Publish Markdown directly to WeChat Official Accounts from VSCode",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "publisher": "cygnus",
   "repository": {
     "type": "git",
