@@ -119,8 +119,8 @@ describe('extension', () => {
 
   it('should activate without error', async () => {
     await expect(activate(mockContext)).resolves.not.toThrow();
-    expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(2);
-    expect(mockContext.subscriptions).toHaveLength(3);
+    expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(3);
+    expect(mockContext.subscriptions).toHaveLength(4);
   });
 
   it('should deactivate without error', () => {

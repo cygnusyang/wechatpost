@@ -2,11 +2,13 @@ import * as vscode from 'vscode';
 import { WeChatService } from './services/WeChatService';
 import { SettingsService } from './services/SettingsService';
 import { ChromeCDPService } from './services/ChromeCDPService';
+import { PlaywrightService } from './services/PlaywrightService';
 import { extractTitle } from './utils/extractTitle';
 
 let weChatService: WeChatService;
 let settingsService: SettingsService;
 let chromeCdpService: ChromeCDPService;
+let playwrightService: PlaywrightService;
 let outputChannel: vscode.OutputChannel;
 
 function log(message: string, level: 'info' | 'error' | 'warn' = 'info'): void {
@@ -43,6 +45,7 @@ export async function activate(context: vscode.ExtensionContext) {
     settingsService = new SettingsService(context);
     const storagePath = context.globalStorageUri?.fsPath || context.extensionPath;
     chromeCdpService = new ChromeCDPService(outputChannel, storagePath);
+    playwrightService = new PlaywrightService(outputChannel, storagePath);
     log('Services initialized successfully');
 
     log('Step 2: Registering commands...');
@@ -91,6 +94,38 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     context.subscriptions.push(disposable);
     log('Command registered: multipost.uploadToWeChat');
+
+    // Register Playwright-based upload command
+    disposable = vscode.commands.registerCommand(
+      'multipost.uploadToWeChatPlaywright',
+      async () => {
+        log('Command invoked: multipost.uploadToWeChatPlaywright');
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+          vscode.window.showErrorMessage('No active editor');
+          log('Error: No active editor', 'error');
+          return;
+        }
+
+        const markdown = editor.document.getText();
+        const fileName = editor.document.fileName;
+        const title = extractTitle(markdown) || fileName.split('/').pop()?.replace(/\.md$/, '') || 'Untitled';
+        log(`Extracted title: "${title}", markdown length: ${markdown.length} characters`);
+
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Starting Playwright automated upload...',
+            cancellable: false,
+          },
+          async (progress) => {
+            await handlePlaywrightFullAutomatedUpload(markdown, title, progress);
+          }
+        );
+      }
+    );
+    context.subscriptions.push(disposable);
+    log('Command registered: multipost.uploadToWeChatPlaywright');
 
     log('All commands registered successfully');
 
@@ -185,6 +220,52 @@ async function processMarkdownContent(
   }
 
   return result;
+}
+
+/**
+ * Handle fully automated Playwright upload workflow:
+ * - Ensure authenticated (login if needed)
+ * - Process markdown (render mermaid, upload images)
+ * - Create draft in browser via Playwright automation
+ */
+async function handlePlaywrightFullAutomatedUpload(
+  markdown: string,
+  title: string,
+  progress: vscode.Progress<{ message?: string }>
+): Promise<void> {
+  try {
+    log('Starting Playwright upload workflow');
+
+    // Step 1: Process markdown (render mermaid, upload images)
+    progress.report({ message: 'Processing markdown...' });
+    const { html } = await processMarkdownContent(markdown);
+
+    // Step 2: Create draft directly in browser via Playwright automation
+    progress.report({ message: 'Creating draft in Chrome (Playwright)...' });
+
+    // Check if we need to login
+    if (!playwrightService.isSessionActive()) {
+      progress.report({ message: 'Waiting for QR code scan...' });
+      await playwrightService.startFirstTimeLogin();
+    }
+
+    // Create draft
+    const draftUrl = await playwrightService.createDraftInBrowser(
+      title,
+      settingsService.getDefaultAuthor() || 'Unknown',
+      html,
+      html.replace(/<[^>]*>/g, '').slice(0, 120) // 提取前120个字符作为摘要
+    );
+
+    vscode.window.showInformationMessage('Draft created successfully in Chrome via Playwright!');
+    log(`Draft created successfully via Playwright: ${draftUrl}`);
+  } catch (error) {
+    vscode.window.showErrorMessage(`Playwright upload failed: ${(error as Error).message}`);
+    log(`Unexpected error during Playwright upload: ${(error as Error).message}`, 'error');
+    if (error instanceof Error && error.stack) {
+      log(`Stack trace: ${error.stack}`, 'error');
+    }
+  }
 }
 
 /**
