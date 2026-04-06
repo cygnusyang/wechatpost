@@ -363,56 +363,88 @@ export class PlaywrightService {
    */
   private async fillContentField(content: string): Promise<void> {
     try {
-      // 使用与参考脚本相同的定位策略
-      this.log('[DEBUG] Trying to fill content with reference script selector');
+      this.log('[DEBUG] Trying to fill content with ProseMirror editor selector');
 
-      // 首先点击 section 元素来确保编辑器区域获得焦点（参考 Python 脚本）
+      // 微信公众号现在使用 ProseMirror 富文本编辑器
+      // 首先尝试定位到 ProseMirror 编辑器区域
+      const proseMirrorSelector = this.authenticatedPage!.locator('div.ProseMirror');
+
+      if (await proseMirrorSelector.count() > 0) {
+        this.log('[DEBUG] ProseMirror editor found');
+        await proseMirrorSelector.waitFor({ timeout: 30000 });
+
+        // 点击激活编辑器
+        await proseMirrorSelector.click();
+
+        // 填充内容（ProseMirror 可以直接使用 fill 方法）
+        await proseMirrorSelector.fill(content);
+        this.log(`[DEBUG] Content filled successfully in ProseMirror, length: ${content.length} characters`);
+        return;
+      }
+
+      // 如果 ProseMirror 未找到，尝试其他方法
+      this.log('[DEBUG] ProseMirror not found, trying fallback selectors');
+
+      // 首先检查是否有 #ueditor_0（常见的编辑器容器）
+      const ueditorSelector = this.authenticatedPage!.locator('#ueditor_0');
+      if (await ueditorSelector.count() > 0) {
+        this.log('[DEBUG] UEditor found');
+        await ueditorSelector.waitFor({ timeout: 30000 });
+
+        // 尝试在 UEditor 中找到可编辑区域
+        await ueditorSelector.click();
+
+        // 尝试填充内容到编辑器
+        try {
+          const editableArea = ueditorSelector.locator('div[contenteditable="true"]');
+          if (await editableArea.count() > 0) {
+            await editableArea.fill(content);
+            this.log(`[DEBUG] Content filled successfully in UEditor, length: ${content.length} characters`);
+            return;
+          }
+        } catch (error) {
+          this.log(`[DEBUG] Failed to fill UEditor editable area: ${error}`, 'warn');
+        }
+      }
+
+      // 如果上述方法都失败，尝试更简单的方法：直接定位到可见的编辑器内容区域
+      this.log('[DEBUG] Trying simple contenteditable selector');
+      const contenteditableSelector = this.authenticatedPage!.locator('[contenteditable="true"]');
+      if (await contenteditableSelector.count() > 0) {
+        this.log(`[DEBUG] Found ${await contenteditableSelector.count()} contenteditable elements`);
+        await contenteditableSelector.waitFor({ timeout: 30000 });
+
+        // 点击激活第一个可编辑元素
+        await contenteditableSelector.first().click();
+        await contenteditableSelector.first().fill(content);
+        this.log(`[DEBUG] Content filled successfully in contenteditable element, length: ${content.length} characters`);
+        return;
+      }
+
+      // 最后尝试原始的参考脚本选择器，但使用 nth(0) 来避免多个匹配的问题
+      this.log('[DEBUG] Trying original reference selector with first match');
       await this.authenticatedPage!.locator('section').click();
-
-      // 使用与 Python 脚本完全相同的选择器：div 元素包含精确文本 "从这里开始写正文"
-      const contentSelector = this.authenticatedPage!.locator('div').filter({ hasText: /^从这里开始写正文$/ });
+      const contentSelector = this.authenticatedPage!.locator('div').filter({ hasText: /^从这里开始写正文$/ }).first();
 
       await contentSelector.waitFor({ timeout: 30000 });
-
-      // 点击以激活编辑器
       await contentSelector.click();
-
-      // 填充内容
       await contentSelector.fill(content);
+      this.log(`[DEBUG] Content filled successfully with reference selector, length: ${content.length} characters`);
 
-      this.log(`[DEBUG] Content filled successfully, length: ${content.length} characters`);
     } catch (error) {
-      this.log(`[DEBUG] Failed to fill content with reference selector: ${error}`, 'warn');
+      this.log(`[DEBUG] Failed to fill content: ${error}`, 'error');
 
-      // 备用策略：尝试其他定位方法
+      // 输出页面 HTML 的片段以帮助调试
       try {
-        this.log('[DEBUG] Trying fallback selectors');
-        const fallbackSelectors = [
-          this.authenticatedPage!.locator('#edui1_contentplaceholder'),
-          this.authenticatedPage!.locator('.editor_content_placeholder'),
-          this.authenticatedPage!.getByText('从这里开始写正文'),
-          this.authenticatedPage!.frameLocator('iframe').locator('body')
-        ];
-
-        let contentFilled = false;
-        for (const selector of fallbackSelectors) {
-          try {
-            await selector.waitFor({ timeout: 10000 });
-            await selector.click();
-            await selector.fill(content);
-            this.log(`[DEBUG] Content filled with fallback selector: ${content.length} characters`);
-            contentFilled = true;
-            break;
-          } catch (fallbackError) {
-            this.log(`[DEBUG] Fallback selector failed: ${fallbackError}`, 'warn');
-          }
+        const bodyHTML = await this.authenticatedPage!.locator('body').innerHTML();
+        const editorRelatedHTML = bodyHTML.match(/<div[^>]*ProseMirror[^>]*>[\s\S]{0,200}<\/div>/) ||
+                                   bodyHTML.match(/<div[^>]*ueditor[^>]*>[\s\S]{0,200}<\/div>/) ||
+                                   bodyHTML.match(/<div[^>]*contenteditable[^>]*>[\s\S]{0,200}<\/div>/);
+        if (editorRelatedHTML) {
+          this.log(`[DEBUG] Editor-related HTML snippet: ${editorRelatedHTML[0]}`, 'warn');
         }
-
-        if (!contentFilled) {
-          this.log('[DEBUG] All content selectors failed, skipping', 'warn');
-        }
-      } catch (fallbackError) {
-        this.log(`[DEBUG] Fallback strategies also failed: ${fallbackError}`, 'error');
+      } catch (htmlError) {
+        this.log(`[DEBUG] Failed to extract editor HTML snippet: ${htmlError}`, 'warn');
       }
     }
   }
