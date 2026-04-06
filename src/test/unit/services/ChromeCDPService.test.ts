@@ -230,9 +230,9 @@ describe('ChromeCDPService', () => {
     await service.startFirstTimeLogin();
     const draftUrl = await service.createDraftInBrowser('Title', 'Author', '<p>Hello</p>', 'Digest');
 
-    // Now we expect navigation to the appmsg list page with token
+    // We now navigate through links, not directly to a specific URL
     expect(page.goto).toHaveBeenCalledWith(
-      expect.stringContaining('https://mp.weixin.qq.com/cgi-bin/appmsg?action=list'),
+      'https://mp.weixin.qq.com/',
       expect.objectContaining({ waitUntil: 'networkidle2' })
     );
     expect(frame.evaluate).toHaveBeenCalledWith(expect.any(Function), '<p>Hello</p>');

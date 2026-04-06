@@ -8,7 +8,6 @@ import type { Browser, Page, CookieParam } from 'puppeteer';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { WeChatUrlParser } from '../utils/wechatUrlParser';
 
 const LOGIN_TIMEOUT_MS = 120000; // 2 minutes timeout for user to scan QR
 const POLL_INTERVAL_MS = 2000; // Check every 2 seconds for login completion
@@ -280,44 +279,85 @@ export class ChromeCDPService {
         throw new Error('Current browser session is not logged in. Please complete QR login first.');
       }
 
-      // Step 3: get token from URL/window context and go to appmsg list page (draft entry page)
-      const token = await this.extractTokenFromPage(page);
-      // 使用动态URL解析器获取列表URL
-      const urlParser = new WeChatUrlParser(page);
-      const listUrl = await urlParser.extractContentListUrl();
-      this.log(`[DEBUG] Step 3: Navigating to appmsg list: ${listUrl}`);
-      await page.goto(listUrl, { waitUntil: 'networkidle2' });
-      this.log(`[DEBUG] Step 3 complete: ${page.url()}`);
-
-      // Step 4: click create/new entry from real page structure (no unsupported pseudo selectors)
-      this.log('[DEBUG] Step 4: Trying to click create/new article entry');
-      const clickedCreate = await this.clickByHeuristic(page, {
-        stepLabel: 'new-creation-entry',
-        selectors: ['a[href*="appmsg_edit"]', 'a[href*="operate_appmsg"]', '[class*="create"]', '[class*="new"]'],
-        textIncludes: ['新建', '创作', '写新文章', '图文消息'],
-        hrefIncludes: ['appmsg_edit', 'operate_appmsg'],
+      // Step 3: 导航到内容管理 → 草稿箱 → 新的创作 → 写新文章 (参考push.py的路径)
+      this.log('[DEBUG] Step 3: Navigating to content management');
+      const contentManagementClicked = await this.clickByHeuristic(page, {
+        stepLabel: 'content-management',
+        selectors: ['a[title*="内容管理"]', 'a[href*="content"]', '[class*="content"]'],
+        textIncludes: ['内容管理'],
+        hrefIncludes: ['content'],
       });
 
-      if (clickedCreate) {
+      if (contentManagementClicked) {
         await this.waitForPotentialNavigation(page);
-      } else {
-        this.log('[DEBUG] Create entry not found from list, falling back to direct editor URL (without appmsgid)');
-        // 使用动态URL解析器获取编辑URL，不传递appmsgid让平台生成新ID
-        const editorUrl = await urlParser.extractEditUrl();
-        this.log(`[DEBUG] Using dynamic editor URL: ${editorUrl}`);
-        await page.goto(editorUrl, { waitUntil: 'networkidle2' });
       }
 
-      // Step 5: if there is a second-level "write new article" entrance, click it
-      this.log('[DEBUG] Step 5: Trying to click optional "write new article" button');
+      // 导航到草稿箱
+      this.log('[DEBUG] Step 4: Navigating to draft box');
+      const draftBoxClicked = await this.clickByHeuristic(page, {
+        stepLabel: 'draft-box',
+        selectors: ['a[href*="draft"]', 'a[title*="草稿"]', '[class*="draft"]'],
+        textIncludes: ['草稿箱'],
+        hrefIncludes: ['draft'],
+      });
+
+      if (draftBoxClicked) {
+        await this.waitForPotentialNavigation(page);
+      }
+
+      // 点击新的创作
+      this.log('[DEBUG] Step 5: Clicking "New Creation"');
+      const newCreationClicked = await this.clickByHeuristic(page, {
+        stepLabel: 'new-creation',
+        selectors: ['a[href*="create"]', 'a[title*="创作"]', '[class*="create"]', '[class*="new"]'],
+        textIncludes: ['新的创作', '创作', '新建'],
+        hrefIncludes: ['create', 'new'],
+      });
+
+      if (newCreationClicked) {
+        await this.waitForPotentialNavigation(page);
+      }
+
+      // 点击写新文章（可能会打开新窗口）
+      this.log('[DEBUG] Step 6: Clicking "Write New Article"');
+
+      // 监听新页面
+      let newPage: Page | null = null;
+      const popupPromise = new Promise<Page>((resolve) => {
+        this.browser?.on('targetcreated', async (target) => {
+          if (target.type() === 'page') {
+            const popupPage = await target.page();
+            if (popupPage && popupPage.url().includes('mp.weixin.qq.com')) {
+              resolve(popupPage);
+            }
+          }
+        });
+      });
+
       const clickedWrite = await this.clickByHeuristic(page, {
         stepLabel: 'write-new-article',
-        selectors: ['a[href*="appmsg_edit"]', 'button', '[role="button"]', '[class*="write"]'],
-        textIncludes: ['写新文章', '新建文章'],
+        selectors: ['a[href*="appmsg_edit"]', 'a[href*="operate_appmsg"]', '[class*="write"]'],
+        textIncludes: ['写新文章'],
         hrefIncludes: ['appmsg_edit', 'operate_appmsg'],
       });
+
       if (clickedWrite) {
-        await this.waitForPotentialNavigation(page);
+        try {
+          newPage = await Promise.race([
+            popupPromise,
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000))
+          ]);
+
+          if (newPage) {
+            this.log('[DEBUG] Step 6: New page opened for article editing');
+            await newPage.waitForNavigation({ waitUntil: 'networkidle2' });
+            this.authenticatedPage = newPage; // 更新为新页面
+          } else {
+            this.log('[DEBUG] Step 6: No new page opened, assuming navigation happened in same tab');
+          }
+        } catch (error) {
+          this.log(`[DEBUG] Step 6: Error waiting for popup: ${error}`, 'warn');
+        }
       }
     } catch (error) {
       await this.capturePageSnapshot(page, 'draft-create-navigation-failed');
@@ -560,28 +600,6 @@ export class ChromeCDPService {
     return false;
   }
 
-  private async extractTokenFromPage(page: Page): Promise<string> {
-    const tokenFromUrl = new URL(page.url()).searchParams.get('token');
-    if (tokenFromUrl) {
-      this.log(`[DEBUG] Token extracted from URL: ${tokenFromUrl}`);
-      return tokenFromUrl;
-    }
-
-    const tokenFromWindow = await page.evaluate(() => {
-      const maybeGlobal = (window as any).global;
-      if (maybeGlobal && maybeGlobal.token) {
-        return String(maybeGlobal.token);
-      }
-      return '';
-    });
-    if (tokenFromWindow) {
-      this.log(`[DEBUG] Token extracted from window.global: ${tokenFromWindow}`);
-      return tokenFromWindow;
-    }
-
-    await this.capturePageSnapshot(page, 'token-not-found');
-    throw new Error('Could not extract token from current page. Please relogin and retry.');
-  }
 
   private async capturePageSnapshot(page: Page, label: string): Promise<void> {
     try {

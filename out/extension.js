@@ -39,10 +39,12 @@ const vscode = __importStar(require("vscode"));
 const WeChatService_1 = require("./services/WeChatService");
 const SettingsService_1 = require("./services/SettingsService");
 const ChromeCDPService_1 = require("./services/ChromeCDPService");
+const PlaywrightService_1 = require("./services/PlaywrightService");
 const extractTitle_1 = require("./utils/extractTitle");
 let weChatService;
 let settingsService;
 let chromeCdpService;
+let playwrightService;
 let outputChannel;
 function log(message, level = 'info') {
     const timestamp = new Date().toISOString();
@@ -74,6 +76,7 @@ async function activate(context) {
         settingsService = new SettingsService_1.SettingsService(context);
         const storagePath = context.globalStorageUri?.fsPath || context.extensionPath;
         chromeCdpService = new ChromeCDPService_1.ChromeCDPService(outputChannel, storagePath);
+        playwrightService = new PlaywrightService_1.PlaywrightService(outputChannel, storagePath);
         log('Services initialized successfully');
         log('Step 2: Registering commands...');
         log(`Available vscode.commands: ${typeof vscode.commands}`);
@@ -108,6 +111,29 @@ async function activate(context) {
         });
         context.subscriptions.push(disposable);
         log('Command registered: multipost.uploadToWeChat');
+        // Register Playwright-based upload command
+        disposable = vscode.commands.registerCommand('multipost.uploadToWeChatPlaywright', async () => {
+            log('Command invoked: multipost.uploadToWeChatPlaywright');
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showErrorMessage('No active editor');
+                log('Error: No active editor', 'error');
+                return;
+            }
+            const markdown = editor.document.getText();
+            const fileName = editor.document.fileName;
+            const title = (0, extractTitle_1.extractTitle)(markdown) || fileName.split('/').pop()?.replace(/\.md$/, '') || 'Untitled';
+            log(`Extracted title: "${title}", markdown length: ${markdown.length} characters`);
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: 'Starting Playwright automated upload...',
+                cancellable: false,
+            }, async (progress) => {
+                await handlePlaywrightFullAutomatedUpload(markdown, title, progress);
+            });
+        });
+        context.subscriptions.push(disposable);
+        log('Command registered: multipost.uploadToWeChatPlaywright');
         log('All commands registered successfully');
         log('Step 3: Loading saved authentication from storage in background...');
         void weChatService.loadAuthFromStorage().then(() => {
@@ -186,6 +212,39 @@ async function processMarkdownContent(markdown) {
         result.errors.forEach(err => log(`  - ${err}`, 'warn'));
     }
     return result;
+}
+/**
+ * Handle fully automated Playwright upload workflow:
+ * - Ensure authenticated (login if needed)
+ * - Process markdown (render mermaid, upload images)
+ * - Create draft in browser via Playwright automation
+ */
+async function handlePlaywrightFullAutomatedUpload(markdown, title, progress) {
+    try {
+        log('Starting Playwright upload workflow');
+        // Step 1: Process markdown (render mermaid, upload images)
+        progress.report({ message: 'Processing markdown...' });
+        const { html } = await processMarkdownContent(markdown);
+        // Step 2: Create draft directly in browser via Playwright automation
+        progress.report({ message: 'Creating draft in Chrome (Playwright)...' });
+        // Check if we need to login
+        if (!playwrightService.isSessionActive()) {
+            progress.report({ message: 'Waiting for QR code scan...' });
+            await playwrightService.startFirstTimeLogin();
+        }
+        // Create draft
+        const draftUrl = await playwrightService.createDraftInBrowser(title, settingsService.getDefaultAuthor() || 'Unknown', html, html.replace(/<[^>]*>/g, '').slice(0, 120) // 提取前120个字符作为摘要
+        );
+        vscode.window.showInformationMessage('Draft created successfully in Chrome via Playwright!');
+        log(`Draft created successfully via Playwright: ${draftUrl}`);
+    }
+    catch (error) {
+        vscode.window.showErrorMessage(`Playwright upload failed: ${error.message}`);
+        log(`Unexpected error during Playwright upload: ${error.message}`, 'error');
+        if (error instanceof Error && error.stack) {
+            log(`Stack trace: ${error.stack}`, 'error');
+        }
+    }
 }
 /**
  * Handle fully automated CDP upload workflow:

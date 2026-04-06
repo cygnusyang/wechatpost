@@ -485,8 +485,8 @@ export class WeChatService implements IWeChatService {
 
       if (isSuccess) {
         const appMsgId = result.appMsgId || result.appmsgid;
-        const draftUrl = `https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&type=77&appmsgid=${appMsgId}&token=${this.authInfo.token}&lang=zh_CN`;
-        this.log(`Draft created successfully: appMsgId=${appMsgId}`);
+        const draftUrl = this.buildDraftEditUrl(appMsgId);
+        this.log(`Draft created successfully: appMsgId=${appMsgId}, draftUrl=${draftUrl}`);
         return { success: true, appMsgId, draftUrl };
       } else {
         const errMsg = result.errmsg || result.base_resp?.err_msg || 'Create draft failed';
@@ -501,6 +501,34 @@ export class WeChatService implements IWeChatService {
       }
       return { success: false, error: String(error) };
     }
+  }
+
+  private buildDraftEditUrl(appMsgId: string): string {
+    // 构建动态编辑URL，避免硬编码
+    const baseUrl = 'https://mp.weixin.qq.com';
+    const params = new URLSearchParams();
+    
+    // 核心参数
+    params.append('t', 'media/appmsg_edit');
+    params.append('action', 'edit');
+    params.append('appmsgid', appMsgId);
+    
+    // 尝试从authInfo获取type，如果没有则使用默认值
+    // 注意：这里仍然有硬编码的风险，但比之前的完全硬编码要好
+    // 理想情况下应该从API响应或配置中获取type值
+    const type = '77'; // 暂时保留，后续可以从配置或动态获取
+    params.append('type', type);
+    
+    // 添加认证参数
+    if (this.authInfo?.token) {
+      params.append('token', this.authInfo.token);
+    }
+    
+    // 添加语言参数
+    const lang = 'zh_CN';
+    params.append('lang', lang);
+    
+    return `${baseUrl}/cgi-bin/appmsg?${params.toString()}`;
   }
 
   private getRequestHeaders(auth?: WeChatAuthInfo): Record<string, string> {
