@@ -363,78 +363,53 @@ export class PlaywrightService {
    */
   private async fillContentField(content: string): Promise<void> {
     try {
-      this.log('[DEBUG] Trying to fill content with ProseMirror editor selector');
-
       // 微信公众号现在使用 ProseMirror 富文本编辑器
-      // 首先尝试定位到 ProseMirror 编辑器区域
       const proseMirrorSelector = this.authenticatedPage!.locator('div.ProseMirror');
 
       if (await proseMirrorSelector.count() > 0) {
-        this.log('[DEBUG] ProseMirror editor found');
         await proseMirrorSelector.waitFor({ timeout: 30000 });
-
-        // 点击激活编辑器
         await proseMirrorSelector.click();
-
-        // 填充内容（ProseMirror 可以直接使用 fill 方法）
         await proseMirrorSelector.fill(content);
-        this.log(`[DEBUG] Content filled successfully in ProseMirror, length: ${content.length} characters`);
         return;
       }
 
       // 如果 ProseMirror 未找到，尝试其他方法
-      this.log('[DEBUG] ProseMirror not found, trying fallback selectors');
-
-      // 首先检查是否有 #ueditor_0（常见的编辑器容器）
       const ueditorSelector = this.authenticatedPage!.locator('#ueditor_0');
       if (await ueditorSelector.count() > 0) {
-        this.log('[DEBUG] UEditor found');
         await ueditorSelector.waitFor({ timeout: 30000 });
-
-        // 尝试在 UEditor 中找到可编辑区域
         await ueditorSelector.click();
 
-        // 尝试填充内容到编辑器
         try {
           const editableArea = ueditorSelector.locator('div[contenteditable="true"]');
           if (await editableArea.count() > 0) {
             await editableArea.fill(content);
-            this.log(`[DEBUG] Content filled successfully in UEditor, length: ${content.length} characters`);
             return;
           }
         } catch (error) {
-          this.log(`[DEBUG] Failed to fill UEditor editable area: ${error}`, 'warn');
+          // 忽略 UEditor 内部错误，继续尝试其他方法
         }
       }
 
-      // 如果上述方法都失败，尝试更简单的方法：直接定位到可见的编辑器内容区域
-      this.log('[DEBUG] Trying simple contenteditable selector');
+      // 如果上述方法都失败，尝试更简单的方法
       const contenteditableSelector = this.authenticatedPage!.locator('[contenteditable="true"]');
       if (await contenteditableSelector.count() > 0) {
-        this.log(`[DEBUG] Found ${await contenteditableSelector.count()} contenteditable elements`);
         await contenteditableSelector.waitFor({ timeout: 30000 });
-
-        // 点击激活第一个可编辑元素
         await contenteditableSelector.first().click();
         await contenteditableSelector.first().fill(content);
-        this.log(`[DEBUG] Content filled successfully in contenteditable element, length: ${content.length} characters`);
         return;
       }
 
-      // 最后尝试原始的参考脚本选择器，但使用 nth(0) 来避免多个匹配的问题
-      this.log('[DEBUG] Trying original reference selector with first match');
+      // 最后尝试原始的参考脚本选择器
       await this.authenticatedPage!.locator('section').click();
       const contentSelector = this.authenticatedPage!.locator('div').filter({ hasText: /^从这里开始写正文$/ }).first();
-
       await contentSelector.waitFor({ timeout: 30000 });
       await contentSelector.click();
       await contentSelector.fill(content);
-      this.log(`[DEBUG] Content filled successfully with reference selector, length: ${content.length} characters`);
 
     } catch (error) {
       this.log(`[DEBUG] Failed to fill content: ${error}`, 'error');
 
-      // 输出页面 HTML 的片段以帮助调试
+      // 只在出错时打印详细的调试信息
       try {
         const bodyHTML = await this.authenticatedPage!.locator('body').innerHTML();
         const editorRelatedHTML = bodyHTML.match(/<div[^>]*ProseMirror[^>]*>[\s\S]{0,200}<\/div>/) ||
