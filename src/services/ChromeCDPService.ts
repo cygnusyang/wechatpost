@@ -8,6 +8,7 @@ import type { Browser, Page, CookieParam } from 'puppeteer';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { WeChatUrlParser } from '../utils/wechatUrlParser';
 
 const LOGIN_TIMEOUT_MS = 120000; // 2 minutes timeout for user to scan QR
 const POLL_INTERVAL_MS = 2000; // Check every 2 seconds for login completion
