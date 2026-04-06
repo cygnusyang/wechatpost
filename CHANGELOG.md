@@ -1,5 +1,15 @@
 # Change Log
 
+## 0.5.6 (2026-04-06)
+
+- 🎉 Major refactor: **Remove CDP mode and use Playwright as default**
+- 🐛 Fix: Playwright navigation timeout - increased timeout to 60 seconds and optimized navigation flow
+- 🔧 Improve: Draft creation - directly navigate to editor URL instead of menu navigation
+- 🔧 Update: Command palette - removed CDP command, renamed Playwright command to "Upload to WeChat Official Accounts"
+- 📦 Remove: Puppeteer dependency (no longer needed for CDP mode)
+- 🧪 Test: Updated all tests to reflect Playwright implementation
+- 🏷️ Bump version to 0.5.6
+
 ## 0.5.5 (2026-04-06)
 
 - 🐛 Fix: Unified output channels - WeChatService now uses "MultiPost" channel instead of separate "MultiPost WeChat"
