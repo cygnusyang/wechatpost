@@ -2,19 +2,19 @@
   "name": "multipost",
   "displayName": "MultiPost - WeChat Publisher",
   "description": "Publish Markdown directly to WeChat Official Accounts from VSCode",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "publisher": "cygnus",
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/cygnus/MultiPost.git"
   },
+  "license": "MIT",
   "engines": {
     "vscode": "^1.80.0"
   },
   "categories": [
-    "Other",
-    "Markdown"
+    "Other"
   ],
   "activationEvents": [
     "onLanguage:markdown"

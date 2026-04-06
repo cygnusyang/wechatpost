@@ -1,5 +1,31 @@
 # Change Log
 
+## 0.5.5 (2026-04-06)
+
+- 🐛 Fix: Unified output channels - WeChatService now uses "MultiPost" channel instead of separate "MultiPost WeChat"
+- 🔧 Improve: Login detection - added URL token check and debug logging for better troubleshooting
+- 🏷️ Bump version to 0.5.5
+
+## 0.5.4 (2026-04-06)
+
+- 🐛 Fix: CDP launch - removed call to missing `launchBrowser` helper, directly use Puppeteer launch
+- 🏷️ Bump version to 0.5.4
+
+## 0.5.3 (2026-04-06)
+
+- 🐛 Fix: CDP cookie order - navigate to domain before setting cookies (fixes "All cookies failed")
+- ♻️ Refactor: keep only one upload command, remove duplicate command entry
+- ♻️ Refactor: remove manual cookie login, always use CDP protocol for uploads
+- 🏷️ Bump version to 0.5.3
+
+## 0.5.2 (2026-04-06)
+
+- 🐛 Fix: invalid cookie fields in CDP - save full CookieParam objects with required fields
+- ✅ Add filtering + per-cookie error handling for invalid cookie entries
+- 🔁 Backward compatibility for older cookie formats stored in Secret Storage
+- 🧪 Test fixes for WeChatService and CDP cookie handling
+- 🏷️ Bump version to 0.5.2
+
 ## 0.5.1 (2026-04-05)
 
 - ✨ **Complete CDP-based workflow**: Both login AND publish now happen in Chrome via CDP automation

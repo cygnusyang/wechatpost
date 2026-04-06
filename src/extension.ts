@@ -41,7 +41,7 @@ export async function activate(context: vscode.ExtensionContext) {
   try {
     log('Step 1: Initializing services...');
     // Initialize services
-    weChatService = new WeChatService(context.secrets);
+    weChatService = new WeChatService(context.secrets, outputChannel);
     previewService = new PreviewService(context.extensionUri);
     settingsService = new SettingsService(context);
     const storagePath = context.globalStorageUri?.fsPath || context.extensionPath;

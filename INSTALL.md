@@ -4,13 +4,13 @@
 
 ### 方法 1：从 VSIX 文件安装（推荐）
 
-扩展已经打包好了：`multipost-0.1.10.vsix`
+扩展已经打包好了：`multipost-0.5.1.vsix`
 
 1. 打开 VSCode
 2. 打开扩展面板（Ctrl+Shift+X 或 Cmd+Shift+X）
 3. 点击右上角 `...` 菜单
 4. 选择 **"从 VSIX 安装..."**
-5. 选择文件：`multipost-0.1.10.vsix`
+5. 选择文件：`multipost-0.5.1.vsix`
 6. 重启 VSCode 生效
 
 ### 方法 2：开发模式运行
@@ -26,20 +26,31 @@ npm run compile
 
 ## 使用方法
 
-### 1. 登录微信公众号
+所有命令都以 `MultiPost: ` 前缀显示在命令面板中。
 
-1. 按 `Cmd+Shift+P` (macOS) 或 `Ctrl+Shift+P` (Windows/Linux) 打开命令面板
-2. 输入 `WeChat: Login WeChat Official Accounts` 执行
-3. 在打开的页面中，用微信扫码登录你的公众号后台
-4. 登录成功后关闭登录标签页，插件会自动保存登录状态
+### 1. CDP 全自动推荐（推荐）
 
-### 2. 预览微信格式
+**CDP Fully Automated Upload**
+
+1. 打开 `.md` Markdown 文件
+2. 打开命令面板（`Cmd+Shift+P` / `Ctrl+Shift+P`）
+3. 输入 `CDP Fully Automated Upload` 执行
+4. 如果未登录：会自动打开 Chrome，扫码登录后自动保存凭据并上传
+5. 如果已登录：直接在浏览器中创建草稿
+6. Mermaid 图表会自动渲染为图片并上传到微信 CDN
+
+### 2. 手动 Cookie 模式
+
+1. **Input Cookie (Manual Login)** - 手动输入从浏览器复制的 Cookie
+2. **Upload to WeChat Official Accounts** - 上传当前 Markdown 到微信公众号草稿
+
+### 3. 预览微信格式
 
 1. 打开一个 `.md` Markdown 文件
 2. 打开命令面板，输入 `WeChat: Preview WeChat Format`
 3. 会在侧边打开预览窗口，显示微信公众号格式的预览
 
-### 3. 发布到微信公众号
+### 4. 发布到微信公众号
 
 在预览窗口点击 **"Upload to WeChat"** 按钮，或者：
 
@@ -48,9 +59,9 @@ npm run compile
 3. 等待上传完成
 4. 上传成功后会自动打开微信公众号草稿页面，你可以在那里编辑和发布
 
-### 4. 退出登录
+### 5. 退出登录
 
-打开命令面板，输入 `WeChat: Logout WeChat Official Accounts`
+打开命令面板，输入 `Logout MultiPost`
 
 ## 功能特性
 
@@ -94,7 +105,7 @@ MultiPost/
 │   │   └── themes/         # 主题样式
 │   └── vite.config.ts      # Vite 配置
 ├── media/                  # 构建输出
-└── multipost-0.1.10.vsix   # 安装包
+└── multipost-0.5.1.vsix    # 安装包
 ```
 
 ## 开发
@@ -113,5 +124,5 @@ npm run build:webview
 npm run vscode:prepublish
 
 # 打包 VSIX
-npx @vscode/vsce package
+npx vsce package
 ```

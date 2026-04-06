@@ -12,9 +12,9 @@ export class WeChatService implements IWeChatService {
   private secretStorage: vscode.SecretStorage;
   private outputChannel: vscode.OutputChannel;
 
-  constructor(secretStorage: vscode.SecretStorage) {
+  constructor(secretStorage: vscode.SecretStorage, outputChannel?: vscode.OutputChannel) {
     this.secretStorage = secretStorage;
-    this.outputChannel = vscode.window.createOutputChannel('MultiPost WeChat');
+    this.outputChannel = outputChannel || vscode.window.createOutputChannel('MultiPost WeChat');
   }
 
   private log(message: string, level: 'info' | 'error' | 'warn' = 'info'): void {

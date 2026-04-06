@@ -43,10 +43,10 @@ const form_data_1 = __importDefault(require("form-data"));
 const STORAGE_KEY = 'wechat-publisher.auth';
 const STORAGE_LOAD_TIMEOUT_MS = 1500;
 class WeChatService {
-    constructor(secretStorage) {
+    constructor(secretStorage, outputChannel) {
         this.authInfo = null;
         this.secretStorage = secretStorage;
-        this.outputChannel = vscode.window.createOutputChannel('MultiPost WeChat');
+        this.outputChannel = outputChannel || vscode.window.createOutputChannel('MultiPost WeChat');
     }
     log(message, level = 'info') {
         const timestamp = new Date().toISOString();

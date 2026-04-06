@@ -30,7 +30,12 @@ async function initMermaid(): Promise<void> {
     const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>');
     global.window = dom.window as any;
     global.document = dom.window.document;
-    global.navigator = dom.window.navigator;
+    // 不直接设置 global.navigator，而是使用 Object.defineProperty 来避免只读属性错误
+    Object.defineProperty(global, 'navigator', {
+      value: dom.window.navigator,
+      configurable: true,
+      writable: true
+    });
     log('JSDOM global objects set up');
 
     // Dynamic import after DOM is ready
