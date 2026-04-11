@@ -342,7 +342,12 @@ export class PlaywrightService {
         await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
         await this.authenticatedPage.locator('.weui-desktop-icon-checkbox').click();
         await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
-        await this.authenticatedPage.getByRole('button', { name: '确定' }).click();
+        
+        // Hover over the confirm button to activate it
+        const confirmButton = this.authenticatedPage.getByRole('button', { name: '确定' });
+        await confirmButton.hover();
+        await this.authenticatedPage.waitForTimeout(500); // Wait for button to activate
+        await confirmButton.click();
         await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
         this.log('[DEBUG] Appreciation enabled');
       }
