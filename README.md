@@ -2,7 +2,7 @@
 
 <div align="center">
   <br />
-  <img src="media/icon.png" alt="MultiPost Logo" width="128" height="128">
+  <img src="https://raw.githubusercontent.com/cygnusyang/multipost/main/media/icon.png" alt="MultiPost Logo" width="128" height="128">
   <h1 style="border-bottom: none;">🚀 MultiPost - WeChat Publisher</h1>
   <p style="font-size: 1.2em;">One-click publish Markdown directly to WeChat Official Accounts from VSCode</p>
 </div>

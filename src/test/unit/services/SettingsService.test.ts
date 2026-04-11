@@ -65,6 +65,24 @@ describe('SettingsService', () => {
         if (key === 'publishDirectly') {
           return false;
         }
+        if (key === 'contentThemePreset') {
+          return 'magazine';
+        }
+        if (key === 'contentBodyFontSize') {
+          return 17;
+        }
+        if (key === 'contentLineHeight') {
+          return 1.9;
+        }
+        if (key === 'contentTextColor') {
+          return '#222222';
+        }
+        if (key === 'contentHeadingColor') {
+          return '#111111';
+        }
+        if (key === 'contentLinkColor') {
+          return '#0077cc';
+        }
         return defaultValue;
       }),
       update: mockUpdate,
@@ -79,6 +97,14 @@ describe('SettingsService', () => {
       enableAppreciation: false,
       defaultCollection: 'Tech',
       publishDirectly: false,
+      contentStyle: {
+        themePreset: 'magazine',
+        bodyFontSize: 17,
+        lineHeight: 1.9,
+        textColor: '#222222',
+        headingColor: '#111111',
+        linkColor: '#0077cc',
+      },
     });
   });
 
@@ -92,14 +118,28 @@ describe('SettingsService', () => {
       enableAppreciation: false,
       defaultCollection: 'Collection A',
       publishDirectly: true,
+      contentStyle: {
+        themePreset: 'classic',
+        bodyFontSize: 16,
+        lineHeight: 1.85,
+        textColor: '#1f2329',
+        headingColor: '#0f172a',
+        linkColor: '#0969da',
+      },
     });
 
-    expect(mockUpdate).toHaveBeenCalledTimes(6);
+    expect(mockUpdate).toHaveBeenCalledTimes(12);
     expect(mockUpdate).toHaveBeenCalledWith('defaultAuthor', 'Alice', vscode.ConfigurationTarget.Global);
     expect(mockUpdate).toHaveBeenCalledWith('digestLength', 100, vscode.ConfigurationTarget.Global);
     expect(mockUpdate).toHaveBeenCalledWith('declareOriginal', true, vscode.ConfigurationTarget.Global);
     expect(mockUpdate).toHaveBeenCalledWith('enableAppreciation', false, vscode.ConfigurationTarget.Global);
     expect(mockUpdate).toHaveBeenCalledWith('defaultCollection', 'Collection A', vscode.ConfigurationTarget.Global);
     expect(mockUpdate).toHaveBeenCalledWith('publishDirectly', true, vscode.ConfigurationTarget.Global);
+    expect(mockUpdate).toHaveBeenCalledWith('contentThemePreset', 'classic', vscode.ConfigurationTarget.Global);
+    expect(mockUpdate).toHaveBeenCalledWith('contentBodyFontSize', 16, vscode.ConfigurationTarget.Global);
+    expect(mockUpdate).toHaveBeenCalledWith('contentLineHeight', 1.85, vscode.ConfigurationTarget.Global);
+    expect(mockUpdate).toHaveBeenCalledWith('contentTextColor', '#1f2329', vscode.ConfigurationTarget.Global);
+    expect(mockUpdate).toHaveBeenCalledWith('contentHeadingColor', '#0f172a', vscode.ConfigurationTarget.Global);
+    expect(mockUpdate).toHaveBeenCalledWith('contentLinkColor', '#0969da', vscode.ConfigurationTarget.Global);
   });
 });

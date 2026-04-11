@@ -18,7 +18,8 @@
   ],
   "activationEvents": [
     "onLanguage:markdown",
-    "onCommand:multipost.configurePublishOptions"
+    "onCommand:multipost.configurePublishOptions",
+    "onCommand:multipost.preview"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -55,6 +56,45 @@
           "type": "boolean",
           "default": true,
           "description": "Publish directly by default; disable to save as draft."
+        },
+        "wechatPublisher.contentThemePreset": {
+          "type": "string",
+          "enum": [
+            "classic",
+            "magazine",
+            "minimal"
+          ],
+          "default": "classic",
+          "description": "Theme preset for article typography and layout."
+        },
+        "wechatPublisher.contentBodyFontSize": {
+          "type": "number",
+          "default": 16,
+          "minimum": 12,
+          "maximum": 22,
+          "description": "Body text font size for uploaded article content."
+        },
+        "wechatPublisher.contentLineHeight": {
+          "type": "number",
+          "default": 1.85,
+          "minimum": 1.2,
+          "maximum": 2.4,
+          "description": "Body text line height for uploaded article content."
+        },
+        "wechatPublisher.contentTextColor": {
+          "type": "string",
+          "default": "#1f2329",
+          "description": "Body text color (HEX) for uploaded article content."
+        },
+        "wechatPublisher.contentHeadingColor": {
+          "type": "string",
+          "default": "#0f172a",
+          "description": "Heading color (HEX) for uploaded article content."
+        },
+        "wechatPublisher.contentLinkColor": {
+          "type": "string",
+          "default": "#0969da",
+          "description": "Link/accent color (HEX) for uploaded article content."
         }
       }
     },
@@ -74,6 +114,10 @@
       {
         "command": "multipost.configurePublishOptions",
         "title": "Configure MultiPost Publish Options"
+      },
+      {
+        "command": "multipost.preview",
+        "title": "Preview MultiPost Format"
       }
     ]
   },

@@ -2,7 +2,7 @@
 
 <div align="center">
   <br />
-  <img src="media/icon.png" alt="MultiPost Logo" width="128" height="128">
+  <img src="https://raw.githubusercontent.com/cygnusyang/multipost/main/media/icon.png" alt="MultiPost Logo" width="128" height="128">
   <h1 style="border-bottom: none;">🚀 MultiPost - 微信公众号发布工具</h1>
   <p style="font-size: 1.2em;">从 VSCode 一键发布 Markdown 到微信公众号</p>
 </div>

@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 import MarkdownIt from 'markdown-it';
+import type { ContentStyleSettings } from './SettingsService';
 
 const LOGIN_TIMEOUT_MS = 120000; // 2 minutes timeout for user to scan QR
 const POLL_INTERVAL_MS = 2000; // Check every 2 seconds for login completion
@@ -45,6 +46,54 @@ export class PlaywrightService {
       .replace(/\[(.*?)\]\((.*?)\)/g, '$1 ($2)')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+  }
+
+  /**
+   * Remove the first top-level heading when it appears as the first content block.
+   * WeChat article title is already filled in the title input, so the body should not repeat it.
+   */
+  private stripLeadingTopLevelHeading(markdown: string): string {
+    const lines = markdown.split(/\r?\n/);
+    let firstContentIndex = 0;
+    while (firstContentIndex < lines.length && lines[firstContentIndex].trim() === '') {
+      firstContentIndex += 1;
+    }
+
+    if (firstContentIndex >= lines.length) {
+      return markdown;
+    }
+
+    const currentLine = lines[firstContentIndex].trim();
+    let removeEndIndex = -1;
+
+    // ATX style: # Title (allow optional space like "#Title")
+    if (/^#(?!#)\s*\S/.test(currentLine)) {
+      removeEndIndex = firstContentIndex;
+    } else {
+      // Setext style:
+      // Title
+      // =====
+      const nextIndex = firstContentIndex + 1;
+      if (
+        nextIndex < lines.length &&
+        lines[firstContentIndex].trim() !== '' &&
+        /^=+\s*$/.test(lines[nextIndex].trim())
+      ) {
+        removeEndIndex = nextIndex;
+      }
+    }
+
+    if (removeEndIndex === -1) {
+      return markdown;
+    }
+
+    // Remove the heading block and subsequent empty lines
+    while (removeEndIndex + 1 < lines.length && lines[removeEndIndex + 1].trim() === '') {
+      removeEndIndex += 1;
+    }
+
+    lines.splice(firstContentIndex, removeEndIndex - firstContentIndex + 1);
+    return lines.join('\n');
   }
 
   private async renderMermaidToSvgDataUrl(diagramCode: string): Promise<string | null> {
@@ -99,7 +148,149 @@ export class PlaywrightService {
     }
   }
 
-  private async renderMarkdownToWechatHtml(markdown: string): Promise<string> {
+  private normalizeHexColor(color: string, fallback: string): string {
+    if (/^#[0-9a-fA-F]{6}$/.test(color)) {
+      return color.toLowerCase();
+    }
+    return fallback;
+  }
+
+  private mixHexColors(from: string, to: string, weight: number): string {
+    const safeWeight = Math.max(0, Math.min(1, weight));
+    const parse = (value: string, index: number) => Number.parseInt(value.slice(index, index + 2), 16);
+    const fromHex = this.normalizeHexColor(from, '#000000').slice(1);
+    const toHex = this.normalizeHexColor(to, '#ffffff').slice(1);
+    const mixed = [0, 2, 4].map((index) => {
+      const channel = Math.round(parse(fromHex, index) * (1 - safeWeight) + parse(toHex, index) * safeWeight);
+      return channel.toString(16).padStart(2, '0');
+    });
+    return `#${mixed.join('')}`;
+  }
+
+  private getThemeTokens(style: ContentStyleSettings): {
+    titleAlign: 'left' | 'center';
+    quoteBg: string;
+    quoteBorder: string;
+    inlineCodeBg: string;
+    blockCodeBg: string;
+    blockCodeBorder: string;
+    tableHeaderBg: string;
+    dividerColor: string;
+    emphasisBg: string;
+  } {
+    const safeLink = this.normalizeHexColor(style.linkColor, '#0969da');
+    const safeText = this.normalizeHexColor(style.textColor, '#1f2329');
+
+    switch (style.themePreset) {
+      case 'magazine':
+        return {
+          titleAlign: 'center',
+          quoteBg: this.mixHexColors(safeLink, '#ffffff', 0.92),
+          quoteBorder: safeLink,
+          inlineCodeBg: this.mixHexColors('#f5efe2', '#ffffff', 0.35),
+          blockCodeBg: this.mixHexColors('#f8f4ec', '#ffffff', 0.3),
+          blockCodeBorder: this.mixHexColors(safeLink, '#ffffff', 0.78),
+          tableHeaderBg: this.mixHexColors(safeLink, '#ffffff', 0.86),
+          dividerColor: this.mixHexColors(safeLink, '#ffffff', 0.7),
+          emphasisBg: this.mixHexColors(safeLink, '#ffffff', 0.9),
+        };
+      case 'minimal':
+        return {
+          titleAlign: 'left',
+          quoteBg: '#f6f8fa',
+          quoteBorder: this.mixHexColors(safeLink, '#ffffff', 0.45),
+          inlineCodeBg: '#f6f8fa',
+          blockCodeBg: '#f6f8fa',
+          blockCodeBorder: '#d0d7de',
+          tableHeaderBg: '#f6f8fa',
+          dividerColor: '#d0d7de',
+          emphasisBg: this.mixHexColors(safeLink, '#ffffff', 0.9),
+        };
+      case 'classic':
+      default:
+        return {
+          titleAlign: 'left',
+          quoteBg: this.mixHexColors(safeLink, '#ffffff', 0.9),
+          quoteBorder: safeLink,
+          inlineCodeBg: this.mixHexColors(safeText, '#ffffff', 0.92),
+          blockCodeBg: this.mixHexColors(safeText, '#ffffff', 0.95),
+          blockCodeBorder: this.mixHexColors(safeLink, '#ffffff', 0.82),
+          tableHeaderBg: this.mixHexColors(safeLink, '#ffffff', 0.88),
+          dividerColor: this.mixHexColors(safeLink, '#ffffff', 0.78),
+          emphasisBg: this.mixHexColors(safeLink, '#ffffff', 0.9),
+        };
+    }
+  }
+
+  private applyThemedStyles(html: string, style: ContentStyleSettings): string {
+    const safeStyle: ContentStyleSettings = {
+      themePreset: style.themePreset ?? 'classic',
+      bodyFontSize: style.bodyFontSize,
+      lineHeight: style.lineHeight,
+      textColor: this.normalizeHexColor(style.textColor, '#1f2329'),
+      headingColor: this.normalizeHexColor(style.headingColor, '#0f172a'),
+      linkColor: this.normalizeHexColor(style.linkColor, '#0969da'),
+    };
+
+    const tokens = this.getThemeTokens(safeStyle);
+    const h1Size = safeStyle.bodyFontSize + 14;
+    const h2Size = safeStyle.bodyFontSize + 9;
+    const h3Size = safeStyle.bodyFontSize + 5;
+
+    const withImageStyles = html.replace(/<img([^>]*?)>/g, (_match, attrs: string) => {
+      if (/style\s*=/.test(attrs)) {
+        return `<img${attrs}>`;
+      }
+      return `<img${attrs} style="max-width:100%;height:auto;display:block;margin:18px auto;border-radius:10px;" />`;
+    });
+
+    const styled = withImageStyles
+      .replace(
+        /<h1>/g,
+        `<h1 style="margin:32px 0 20px;padding-bottom:12px;font-size:${h1Size}px;line-height:1.32;font-weight:700;color:${safeStyle.headingColor};text-align:${tokens.titleAlign};border-bottom:1px solid ${tokens.dividerColor};">`
+      )
+      .replace(
+        /<h2>/g,
+        `<h2 style="margin:28px 0 16px;padding-left:10px;border-left:4px solid ${safeStyle.linkColor};font-size:${h2Size}px;line-height:1.4;font-weight:700;color:${safeStyle.headingColor};">`
+      )
+      .replace(
+        /<h3>/g,
+        `<h3 style="margin:22px 0 12px;font-size:${h3Size}px;line-height:1.45;font-weight:650;color:${safeStyle.headingColor};">`
+      )
+      .replace(
+        /<p>/g,
+        `<p style="margin:0 0 18px;font-size:${safeStyle.bodyFontSize}px;line-height:${safeStyle.lineHeight};color:${safeStyle.textColor};letter-spacing:0.01em;">`
+      )
+      .replace(/<ul>/g, `<ul style="margin:0 0 18px;padding-left:1.25em;font-size:${safeStyle.bodyFontSize}px;line-height:${safeStyle.lineHeight};">`)
+      .replace(/<ol>/g, `<ol style="margin:0 0 18px;padding-left:1.25em;font-size:${safeStyle.bodyFontSize}px;line-height:${safeStyle.lineHeight};">`)
+      .replace(/<li>/g, '<li style="margin-bottom:10px;">')
+      .replace(
+        /<blockquote>/g,
+        `<blockquote style="margin:0 0 20px;padding:12px 14px;border-left:4px solid ${tokens.quoteBorder};background:${tokens.quoteBg};color:${safeStyle.textColor};border-radius:6px;">`
+      )
+      .replace(
+        /<pre>/g,
+        `<pre style="margin:0 0 18px;padding:14px;overflow:auto;background:${tokens.blockCodeBg};border:1px solid ${tokens.blockCodeBorder};border-radius:10px;font-size:${Math.max(13, safeStyle.bodyFontSize - 2)}px;line-height:1.65;">`
+      )
+      .replace(/<code>/g, `<code style="font-family:Menlo,Consolas,'Courier New',monospace;background:${tokens.inlineCodeBg};padding:2px 4px;border-radius:4px;">`)
+      .replace(/<strong>/g, `<strong style="color:${safeStyle.headingColor};background:${tokens.emphasisBg};padding:0 2px;border-radius:3px;">`)
+      .replace(/<em>/g, `<em style="color:${safeStyle.headingColor};font-style:italic;">`)
+      .replace(/<hr>/g, `<hr style="border:0;border-top:1px solid ${tokens.dividerColor};margin:28px 0;">`)
+      .replace(
+        /<table>/g,
+        '<table style="width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14px;line-height:1.7;">'
+      )
+      .replace(
+        /<th>/g,
+        `<th style="padding:8px 10px;border:1px solid ${tokens.dividerColor};background:${tokens.tableHeaderBg};font-weight:600;text-align:left;">`
+      )
+      .replace(/<td>/g, `<td style="padding:8px 10px;border:1px solid ${tokens.dividerColor};">`)
+      .replace(/<a /g, `<a style="color:${safeStyle.linkColor};text-decoration:underline;text-underline-offset:2px;" `);
+
+    return `<section style="max-width:760px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans CJK SC','Helvetica Neue',Arial,sans-serif;word-break:break-word;color:${safeStyle.textColor};">${styled}</section>`;
+  }
+
+  private async renderMarkdownToWechatHtml(markdown: string, style: ContentStyleSettings): Promise<string> {
     const mermaidBlocks: string[] = [];
     const markdownWithPlaceholders = markdown.replace(/```mermaid\s*([\s\S]*?)```/g, (_match, mermaidCode: string) => {
       const token = `MP_MERMAID_PLACEHOLDER_${mermaidBlocks.length}`;
@@ -121,15 +312,15 @@ export class PlaywrightService {
       html = html.replace(`<p>${token}</p>`, mermaidHtml).replace(token, mermaidHtml);
     }
 
-    return html;
+    return this.applyThemedStyles(html, style);
   }
 
-  private async fillBodyWithFormattedMarkdown(markdown: string): Promise<void> {
+  private async fillBodyWithFormattedMarkdown(markdown: string, style: ContentStyleSettings): Promise<void> {
     if (!this.authenticatedPage) {
       throw new Error('No authenticated page available.');
     }
 
-    const html = await this.renderMarkdownToWechatHtml(markdown);
+    const html = await this.renderMarkdownToWechatHtml(markdown, style);
 
     try {
       await this.authenticatedPage.evaluate((renderedHtml) => {
@@ -153,6 +344,15 @@ export class PlaywrightService {
       await contentSelector.waitFor({ timeout: 60000 });
       await contentSelector.fill(fallbackText);
     }
+  }
+
+  /**
+   * Render markdown to themed HTML for local preview in VS Code webview.
+   * Mermaid blocks will fallback to code blocks when no authenticated page is available.
+   */
+  async renderMarkdownPreview(markdown: string, style: ContentStyleSettings): Promise<string> {
+    const bodyMarkdown = this.stripLeadingTopLevelHeading(markdown);
+    return this.renderMarkdownToWechatHtml(bodyMarkdown, style);
   }
 
   private log(message: string, level: 'info' | 'error' | 'warn' = 'info'): void {
@@ -389,7 +589,15 @@ export class PlaywrightService {
     isOriginal?: boolean,
     enableAppreciation?: boolean,
     defaultCollection?: string,
-    publish?: boolean
+    publish?: boolean,
+    contentStyle: ContentStyleSettings = {
+      themePreset: 'classic',
+      bodyFontSize: 16,
+      lineHeight: 1.85,
+      textColor: '#1f2329',
+      headingColor: '#0f172a',
+      linkColor: '#0969da',
+    }
   ): Promise<string> {
     if (!this.context || !this.authenticatedPage) {
       throw new Error('No authenticated browser session. Please login first.');
@@ -455,8 +663,12 @@ export class PlaywrightService {
 
       // Step 8: Fill content (following test.py logic)
       this.log('[DEBUG] Step 8: Filling formatted content from markdown');
-      await this.fillBodyWithFormattedMarkdown(content);
-      this.log(`[DEBUG] Formatted content filled, original markdown length: ${content.length}`);
+      const bodyContent = this.stripLeadingTopLevelHeading(content);
+      if (bodyContent !== content) {
+        this.log('[DEBUG] Removed leading H1 from body markdown before upload');
+      }
+      await this.fillBodyWithFormattedMarkdown(bodyContent, contentStyle);
+      this.log(`[DEBUG] Formatted content filled, body markdown length: ${bodyContent.length}`);
 
       // Step 9: Click article settings (following test.py logic)
       this.log('[DEBUG] Step 9: Clicking "文章设置"');

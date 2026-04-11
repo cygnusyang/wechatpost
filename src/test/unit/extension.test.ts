@@ -21,12 +21,21 @@ describe('extension', () => {
     enableAppreciation: true,
     defaultCollection: '智能体',
     publishDirectly: true,
+    contentStyle: {
+      themePreset: 'classic',
+      bodyFontSize: 16,
+      lineHeight: 1.85,
+      textColor: '#1f2329',
+      headingColor: '#0f172a',
+      linkColor: '#0969da',
+    },
   }));
   const mockUpdateSettings = jest.fn().mockResolvedValue(undefined);
   const mockStartFirstTimeLogin = jest.fn().mockResolvedValue(undefined);
   const mockHasSavedLogin = jest.fn().mockResolvedValue(false);
   const mockRestoreLogin = jest.fn().mockResolvedValue(undefined);
   const mockCreateDraftInBrowser = jest.fn().mockResolvedValue('https://example.com/draft');
+  const mockRenderMarkdownPreview = jest.fn().mockResolvedValue('<section><p>Preview</p></section>');
   const mockIsSessionActive = jest.fn(() => false);
   const mockClose = jest.fn().mockResolvedValue(undefined);
 
@@ -71,6 +80,7 @@ describe('extension', () => {
       hasSavedLogin: mockHasSavedLogin,
       restoreLogin: mockRestoreLogin,
       createDraftInBrowser: mockCreateDraftInBrowser,
+      renderMarkdownPreview: mockRenderMarkdownPreview,
       isSessionActive: mockIsSessionActive,
       close: mockClose,
     }));
@@ -82,13 +92,40 @@ describe('extension', () => {
     (vscode.window as any).activeTextEditor = undefined;
   });
 
-  it('registers upload, logout and configure commands', async () => {
+  it('registers upload, logout, preview and configure commands', async () => {
     await activate(mockContext);
 
-    expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(3);
+    expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(4);
     expect(registeredCommands.has('multipost.uploadToWeChat')).toBe(true);
     expect(registeredCommands.has('multipost.logoutWeChat')).toBe(true);
+    expect(registeredCommands.has('multipost.preview')).toBe(true);
     expect(registeredCommands.has('multipost.configurePublishOptions')).toBe(true);
+  });
+
+  it('opens preview webview for active markdown editor', async () => {
+    await activate(mockContext);
+
+    (vscode.window as any).activeTextEditor = {
+      document: {
+        getText: () => '# Test Title\n\nBody',
+        fileName: '/tmp/demo.md',
+      },
+    };
+
+    await registeredCommands.get('multipost.preview')!();
+
+    expect(mockRenderMarkdownPreview).toHaveBeenCalledWith(
+      '# Test Title\n\nBody',
+      {
+        themePreset: 'classic',
+        bodyFontSize: 16,
+        lineHeight: 1.85,
+        textColor: '#1f2329',
+        headingColor: '#0f172a',
+        linkColor: '#0969da',
+      }
+    );
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(1);
   });
 
   it('shows error when upload runs without active editor', async () => {
@@ -120,7 +157,15 @@ describe('extension', () => {
       true,
       true,
       '智能体',
-      true
+      true,
+      {
+        themePreset: 'classic',
+        bodyFontSize: 16,
+        lineHeight: 1.85,
+        textColor: '#1f2329',
+        headingColor: '#0f172a',
+        linkColor: '#0969da',
+      }
     );
   });
 
@@ -130,9 +175,15 @@ describe('extension', () => {
     (vscode.window.showInputBox as jest.Mock)
       .mockResolvedValueOnce('Alice')
       .mockResolvedValueOnce('智能体')
-      .mockResolvedValueOnce('80');
+      .mockResolvedValueOnce('80')
+      .mockResolvedValueOnce('17')
+      .mockResolvedValueOnce('1.9')
+      .mockResolvedValueOnce('#222222')
+      .mockResolvedValueOnce('#111111')
+      .mockResolvedValueOnce('#0077cc');
 
     (vscode.window.showQuickPick as jest.Mock)
+      .mockResolvedValueOnce({ label: '经典 (classic)', value: 'classic' })
       .mockResolvedValueOnce({ label: '是', value: true })
       .mockResolvedValueOnce({ label: '否', value: false })
       .mockResolvedValueOnce({ label: '是', value: true });
@@ -146,6 +197,14 @@ describe('extension', () => {
       declareOriginal: true,
       enableAppreciation: false,
       publishDirectly: true,
+      contentStyle: {
+        themePreset: 'classic',
+        bodyFontSize: 17,
+        lineHeight: 1.9,
+        textColor: '#222222',
+        headingColor: '#111111',
+        linkColor: '#0077cc',
+      },
     });
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('MultiPost 发布选项已保存');
   });

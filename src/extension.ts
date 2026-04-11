@@ -90,6 +90,16 @@ export async function activate(context: vscode.ExtensionContext) {
     log('Command registered: multipost.uploadToWeChat');
 
     disposable = vscode.commands.registerCommand(
+      'multipost.preview',
+      async () => {
+        log('Command invoked: multipost.preview');
+        await previewCurrentDocument();
+      }
+    );
+    context.subscriptions.push(disposable);
+    log('Command registered: multipost.preview');
+
+    disposable = vscode.commands.registerCommand(
       'multipost.configurePublishOptions',
       async () => {
         log('Command invoked: multipost.configurePublishOptions');
@@ -117,6 +127,114 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildPreviewWebviewHtml(title: string, bodyHtml: string): string {
+  const safeTitle = escapeHtml(title);
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MultiPost Preview</title>
+  <style>
+    :root {
+      --page-bg: #f5f7fa;
+      --card-bg: #ffffff;
+      --text-main: #1f2329;
+      --text-sub: #6b7280;
+      --border: #e5e7eb;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--page-bg);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    }
+    .wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px 16px 48px;
+    }
+    .meta {
+      margin-bottom: 14px;
+      color: var(--text-sub);
+      font-size: 13px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px 18px;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+    }
+    .title {
+      margin: 0 0 18px;
+      font-size: 28px;
+      line-height: 1.35;
+      font-weight: 700;
+      word-break: break-word;
+    }
+    @media (max-width: 768px) {
+      .wrap {
+        padding: 14px 10px 28px;
+      }
+      .card {
+        border-radius: 10px;
+        padding: 16px 12px;
+      }
+      .title {
+        font-size: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="meta">MultiPost 预览（与上传样式保持一致）</div>
+    <article class="card">
+      <h1 class="title">${safeTitle}</h1>
+      ${bodyHtml}
+    </article>
+  </main>
+</body>
+</html>`;
+}
+
+async function previewCurrentDocument(): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    vscode.window.showErrorMessage('No active editor');
+    log('Error: No active editor for preview', 'error');
+    return;
+  }
+
+  const markdown = editor.document.getText();
+  const fileName = editor.document.fileName;
+  const title = extractTitle(markdown) || fileName.split('/').pop()?.replace(/\.md$/, '') || 'Untitled';
+  const settings = settingsService.getSettings();
+
+  const renderedHtml = await playwrightService.renderMarkdownPreview(markdown, settings.contentStyle);
+  const panel = vscode.window.createWebviewPanel(
+    'multipostPreview',
+    `MultiPost Preview: ${title}`,
+    vscode.ViewColumn.Beside,
+    {
+      enableScripts: false,
+      retainContextWhenHidden: true,
+    }
+  );
+  panel.webview.html = buildPreviewWebviewHtml(title, renderedHtml);
+}
+
 async function promptBoolean(
   title: string,
   currentValue: boolean
@@ -129,6 +247,25 @@ async function promptBoolean(
     {
       title,
       placeHolder: currentValue ? '当前: 是' : '当前: 否',
+      ignoreFocusOut: true,
+    }
+  );
+
+  return picked?.value;
+}
+
+async function promptThemePreset(
+  currentValue: ExtensionSettings['contentStyle']['themePreset']
+): Promise<ExtensionSettings['contentStyle']['themePreset'] | undefined> {
+  const picked = await vscode.window.showQuickPick(
+    [
+      { label: '经典 (classic)', value: 'classic' as const },
+      { label: '杂志 (magazine)', value: 'magazine' as const },
+      { label: '简约 (minimal)', value: 'minimal' as const },
+    ],
+    {
+      title: 'MultiPost 配置',
+      placeHolder: `当前: ${currentValue}`,
       ignoreFocusOut: true,
     }
   );
@@ -176,6 +313,78 @@ async function configurePublishOptions(): Promise<void> {
     return;
   }
 
+  const themePreset = await promptThemePreset(current.contentStyle.themePreset);
+  if (themePreset === undefined) {
+    return;
+  }
+
+  const bodyFontSizeInput = await vscode.window.showInputBox({
+    title: 'MultiPost 配置',
+    prompt: '正文字号（px）',
+    value: String(current.contentStyle.bodyFontSize),
+    ignoreFocusOut: true,
+    validateInput: (value: string) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed < 12 || parsed > 22) {
+        return '请输入 12 到 22 之间的数字';
+      }
+      return undefined;
+    },
+  });
+  if (bodyFontSizeInput === undefined) {
+    return;
+  }
+
+  const lineHeightInput = await vscode.window.showInputBox({
+    title: 'MultiPost 配置',
+    prompt: '正文行高（如 1.85）',
+    value: String(current.contentStyle.lineHeight),
+    ignoreFocusOut: true,
+    validateInput: (value: string) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed < 1.2 || parsed > 2.4) {
+        return '请输入 1.2 到 2.4 之间的数字';
+      }
+      return undefined;
+    },
+  });
+  if (lineHeightInput === undefined) {
+    return;
+  }
+
+  const textColorInput = await vscode.window.showInputBox({
+    title: 'MultiPost 配置',
+    prompt: '正文字色（HEX，例如 #1f2329）',
+    value: current.contentStyle.textColor,
+    ignoreFocusOut: true,
+    validateInput: (value: string) => /^#([0-9a-fA-F]{6})$/.test(value) ? undefined : '请输入 6 位 HEX 颜色，如 #1f2329',
+  });
+  if (textColorInput === undefined) {
+    return;
+  }
+
+  const headingColorInput = await vscode.window.showInputBox({
+    title: 'MultiPost 配置',
+    prompt: '标题颜色（HEX，例如 #0f172a）',
+    value: current.contentStyle.headingColor,
+    ignoreFocusOut: true,
+    validateInput: (value: string) => /^#([0-9a-fA-F]{6})$/.test(value) ? undefined : '请输入 6 位 HEX 颜色，如 #0f172a',
+  });
+  if (headingColorInput === undefined) {
+    return;
+  }
+
+  const linkColorInput = await vscode.window.showInputBox({
+    title: 'MultiPost 配置',
+    prompt: '链接/强调色（HEX，例如 #0969da）',
+    value: current.contentStyle.linkColor,
+    ignoreFocusOut: true,
+    validateInput: (value: string) => /^#([0-9a-fA-F]{6})$/.test(value) ? undefined : '请输入 6 位 HEX 颜色，如 #0969da',
+  });
+  if (linkColorInput === undefined) {
+    return;
+  }
+
   const declareOriginal = await promptBoolean('默认开启原创声明', current.declareOriginal);
   if (declareOriginal === undefined) {
     return;
@@ -198,6 +407,14 @@ async function configurePublishOptions(): Promise<void> {
     declareOriginal,
     enableAppreciation,
     publishDirectly,
+    contentStyle: {
+      themePreset,
+      bodyFontSize: Number(bodyFontSizeInput),
+      lineHeight: Number(lineHeightInput),
+      textColor: textColorInput,
+      headingColor: headingColorInput,
+      linkColor: linkColorInput,
+    },
   };
 
   await settingsService.updateSettings(updated);
@@ -241,7 +458,8 @@ async function handlePlaywrightFullAutomatedUpload(
       publishSettings.declareOriginal,
       publishSettings.enableAppreciation,
       publishSettings.defaultCollection,
-      publishSettings.publishDirectly
+      publishSettings.publishDirectly,
+      publishSettings.contentStyle
     );
 
     const successMessage = publishSettings.publishDirectly
