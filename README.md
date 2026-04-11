@@ -1,92 +1,96 @@
+[中文版本 (Chinese Version)](README.zh-CN.md)
+
 # MultiPost - WeChat Publisher
 
-VS Code 扩展 - 将 Markdown 文件一键发布到微信公众号，支持 Mermaid 图表自动渲染上传，支持 Chrome CDP 全自动登录+发布。
+VS Code extension - One-click publish Markdown files to WeChat Official Accounts, supporting automatic Mermaid diagram rendering and upload, and Chrome CDP fully automated login + publishing.
 
-## 功能特性
+## Features
 
-- ✅ 完整支持 Markdown / GFM
-- ✅ 支持 Mermaid 图表自动渲染上传
-- ✅ 代码高亮（highlight.js）
-- ✅ 默认微信样式主题
-- ✅ 手机扫码登录（不需要开发者资质/AppID）
-- ✅ 一键发布到公众号草稿箱
-- ✅ 自动上传所有图片到微信 CDN
-- ✅ VSCode 安全存储认证信息
+- ✅ Full Markdown / GFM support
+- ✅ Automatic Mermaid diagram rendering and upload
+- ✅ Code highlighting (highlight.js)
+- ✅ Default WeChat style theme
+- ✅ Mobile QR code login (no developer资质/AppID required)
+- ✅ One-click publish to official account draft box
+- ✅ Automatic upload of all images to WeChat CDN
+- ✅ VSCode secure storage for authentication information
 
-## 安装
+## Installation
 
-从 VSIX 安装：
+Install from VSIX:
 
-1. 下载 `multipost-<version>.vsix` 文件
-2. 打开 VSCode 扩展面板 (Cmd+Shift+X / Ctrl+Shift+X)
-3. 点击右上角 `...` 菜单
-4. 选择 **"从 VSIX 安装..."**
-5. 选择 `.vsix` 文件，重启 VSCode
+1. Download `multipost-<version>.vsix` file
+2. Open VSCode Extensions panel (Cmd+Shift+X / Ctrl+Shift+X)
+3. Click the top-right `...` menu
+4. Select **"Install from VSIX..."**
+5. Select the `.vsix` file and restart VSCode
 
-## 使用方法
+## Usage
 
-所有命令都以 `MultiPost: ` 前缀显示在命令面板中。
+All commands are prefixed with `MultiPost: ` in the command palette.
 
-### 方式一：CDP 全自动推荐（推荐）
+### Method 1: CDP Fully Automated (Recommended)
 
-**CDP Fully Automated Upload**
+1. Open a `.md` Markdown file
+2. Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
+3. Type `CDP Fully Automated Upload` and execute
+4. If not logged in: Chrome will open automatically, scan QR code to login, save credentials, and upload
+5. If already logged in: Directly create draft in browser
+6. Mermaid diagrams are automatically rendered to images and uploaded to WeChat CDN
 
-1. 打开 `.md` Markdown 文件
-2. 打开命令面板（`Cmd+Shift+P` / `Ctrl+Shift+P`）
-3. 输入 `CDP Fully Automated Upload` 执行
-4. 如果未登录：会自动打开 Chrome，扫码登录后自动保存凭据并上传
-5. 如果已登录：直接在浏览器中创建草稿
-6. Mermaid 图表会自动渲染为图片并上传到微信 CDN
+### Method 2: Manual Cookie Mode
 
-### 方式二：手动 Cookie 模式
+1. **Input Cookie (Manual Login)** - Manually enter cookie copied from browser
+2. **Upload to WeChat Official Accounts** - Upload current Markdown to WeChat official account draft
 
-1. **Input Cookie (Manual Login)** - 手动输入从浏览器复制的 Cookie
-2. **Upload to WeChat Official Accounts** - 上传当前 Markdown 到微信公众号草稿
+### Other Commands
 
-### 其他命令
+- **Preview MultiPost Format** - Preview converted WeChat HTML format in sidebar
+- **Logout MultiPost** - Clear saved login credentials
 
-- **Preview MultiPost Format** - 在侧边栏预览转换后的微信 HTML 格式
-- **Logout MultiPost** - 清除保存的登录凭据
+### Preview WeChat Format
 
-### 预览微信格式
+1. Open a `.md` Markdown file
+2. Open Command Palette, type `Preview MultiPost Format`
+3. A preview window will open showing the WeChat official account format
 
-1. 打开一个 `.md` Markdown 文件
-2. 打开命令面板，输入 `Preview MultiPost Format`
-3. 会在侧边打开预览窗口，显示微信公众号格式的预览
+## Configuration
 
-## 配置
+Search for `wechatPublisher` in VSCode settings:
 
-可以在 VSCode 设置中搜索 `wechatPublisher` 进行配置：
+- `wechatPublisher.defaultAuthor` - Default author name (used when publishing)
+- `wechatPublisher.autoOpenDraftAfterPublish` - Whether to automatically open draft page after successful publishing (default: true)
 
-- `wechatPublisher.defaultAuthor` - 默认作者名（发布时使用）
-- `wechatPublisher.autoOpenDraftAfterPublish` - 发布成功后是否自动打开草稿页面（默认：true）
+## Notes
 
-## 注意事项
+- This plugin uses cookie authentication from WeChat Official Accounts web interface, no developer资质 required
+- Mermaid diagrams are rendered as PNG images and uploaded to WeChat CDN
+- All external images are automatically uploaded to WeChat CDN
+- Authentication information is securely stored in VSCode secret storage, never stored in plain text
 
-- 本插件使用网页版公众号后台的 Cookie 认证方式，不需要公众号开发者资质
-- Mermaid 图表会被渲染为 PNG 图片上传到微信 CDN
-- 所有外部图片都会自动上传到微信 CDN
-- 认证信息安全保存在 VSCode 密钥存储中，不会明文存储
-
-## 开发
+## Development
 
 ```bash
-# 安装依赖
+# Install dependencies
 npm install
 
-# 编译后端
+# Compile backend
 npm run compile
 
-# 编译前端预览
+# Compile frontend preview
 npm run build:webview
 
-# 完整重新打包
+# Full repackage
 npm run vscode:prepublish
 
-# 打包 VSIX
+# Package VSIX
 npx vsce package
 ```
 
-## 许可
+## License
 
 MIT
+
+---
+
+[中文版本 (Chinese Version)](README.zh-CN.md)
