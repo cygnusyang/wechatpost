@@ -320,7 +320,12 @@ export class PlaywrightService {
         
         await this.authenticatedPage.locator('.weui-desktop-icon-checkbox').click();
         await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
-        await this.authenticatedPage.getByRole('button', { name: '确定' }).click();
+        
+        // Hover over confirm button to activate it
+        const originalConfirmButton = this.authenticatedPage.getByRole('button', { name: '确定' });
+        await originalConfirmButton.hover();
+        await this.authenticatedPage.waitForTimeout(500); // Waitress button to activate
+        await originalConfirmButton.click();
         await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
         this.log('[DEBUG] Original declaration set');
       }
