@@ -17,7 +17,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:markdown"
+    "onLanguage:markdown",
+    "onCommand:multipost.configurePublishOptions"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -28,6 +29,32 @@
           "type": "string",
           "default": "",
           "description": "Default author name used when creating a WeChat draft."
+        },
+        "wechatPublisher.digestLength": {
+          "type": "number",
+          "default": 120,
+          "minimum": 0,
+          "description": "Digest length extracted from markdown content."
+        },
+        "wechatPublisher.declareOriginal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable original declaration by default."
+        },
+        "wechatPublisher.enableAppreciation": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable appreciation by default."
+        },
+        "wechatPublisher.defaultCollection": {
+          "type": "string",
+          "default": "智能体",
+          "description": "Default collection name used in WeChat."
+        },
+        "wechatPublisher.publishDirectly": {
+          "type": "boolean",
+          "default": true,
+          "description": "Publish directly by default; disable to save as draft."
         }
       }
     },
@@ -43,6 +70,10 @@
       {
         "command": "multipost.logoutWeChat",
         "title": "Logout MultiPost"
+      },
+      {
+        "command": "multipost.configurePublishOptions",
+        "title": "Configure MultiPost Publish Options"
       }
     ]
   },
@@ -58,9 +89,11 @@
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^20.10.0",
     "@types/vscode": "^1.80.0",
     "jest": "^30.3.0",
+    "markdown-it": "^14.1.0",
     "playwright": "^1.59.1",
     "ts-jest": "^29.4.9",
     "typescript": "^5.9.3"

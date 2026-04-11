@@ -1,6 +1,7 @@
 export const workspace = {
   getConfiguration: jest.fn(() => ({
     get: jest.fn((key: string, defaultValue: any) => defaultValue),
+    update: jest.fn(),
   })),
 };
 
@@ -19,6 +20,7 @@ export const window = {
   showInformationMessage: jest.fn(),
   showWarningMessage: jest.fn(),
   showInputBox: jest.fn(),
+  showQuickPick: jest.fn(),
   withProgress: jest.fn((_, cb) => cb()),
   createWebviewPanel: jest.fn(() => {
     return {
@@ -61,6 +63,12 @@ export enum ViewColumn {
 
 export enum ProgressLocation {
   Notification = 15,
+}
+
+export enum ConfigurationTarget {
+  Global = 1,
+  Workspace = 2,
+  WorkspaceFolder = 3,
 }
 
 export type ExtensionContext = {

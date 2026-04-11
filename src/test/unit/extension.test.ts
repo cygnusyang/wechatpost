@@ -14,7 +14,15 @@ describe('extension', () => {
   let registeredCommands: Map<string, (...args: any[]) => unknown>;
   let mockContext: vscode.ExtensionContext;
 
-  const mockGetDefaultAuthor = jest.fn(() => 'Default Author');
+  const mockGetSettings = jest.fn(() => ({
+    defaultAuthor: 'Default Author',
+    digestLength: 120,
+    declareOriginal: true,
+    enableAppreciation: true,
+    defaultCollection: '智能体',
+    publishDirectly: true,
+  }));
+  const mockUpdateSettings = jest.fn().mockResolvedValue(undefined);
   const mockStartFirstTimeLogin = jest.fn().mockResolvedValue(undefined);
   const mockHasSavedLogin = jest.fn().mockResolvedValue(false);
   const mockRestoreLogin = jest.fn().mockResolvedValue(undefined);
@@ -49,10 +57,13 @@ describe('extension', () => {
 
     (vscode.window.showInformationMessage as jest.Mock).mockResolvedValue(undefined);
     (vscode.window.showErrorMessage as jest.Mock).mockResolvedValue(undefined);
+    (vscode.window.showInputBox as jest.Mock).mockResolvedValue(undefined);
+    (vscode.window.showQuickPick as jest.Mock).mockResolvedValue(undefined);
     (vscode.window as any).activeTextEditor = undefined;
 
     (SettingsService as jest.Mock).mockImplementation(() => ({
-      getDefaultAuthor: mockGetDefaultAuthor,
+      getSettings: mockGetSettings,
+      updateSettings: mockUpdateSettings,
     }));
 
     (PlaywrightService as jest.Mock).mockImplementation(() => ({
@@ -71,12 +82,13 @@ describe('extension', () => {
     (vscode.window as any).activeTextEditor = undefined;
   });
 
-  it('registers upload and logout commands', async () => {
+  it('registers upload, logout and configure commands', async () => {
     await activate(mockContext);
 
-    expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(2);
+    expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(3);
     expect(registeredCommands.has('multipost.uploadToWeChat')).toBe(true);
     expect(registeredCommands.has('multipost.logoutWeChat')).toBe(true);
+    expect(registeredCommands.has('multipost.configurePublishOptions')).toBe(true);
   });
 
   it('shows error when upload runs without active editor', async () => {
@@ -107,8 +119,35 @@ describe('extension', () => {
       '# Test Title\n\nBody',
       true,
       true,
-      '智能体'
+      '智能体',
+      true
     );
+  });
+
+  it('saves publish options from configure command', async () => {
+    await activate(mockContext);
+
+    (vscode.window.showInputBox as jest.Mock)
+      .mockResolvedValueOnce('Alice')
+      .mockResolvedValueOnce('智能体')
+      .mockResolvedValueOnce('80');
+
+    (vscode.window.showQuickPick as jest.Mock)
+      .mockResolvedValueOnce({ label: '是', value: true })
+      .mockResolvedValueOnce({ label: '否', value: false })
+      .mockResolvedValueOnce({ label: '是', value: true });
+
+    await registeredCommands.get('multipost.configurePublishOptions')!();
+
+    expect(mockUpdateSettings).toHaveBeenCalledWith({
+      defaultAuthor: 'Alice',
+      defaultCollection: '智能体',
+      digestLength: 80,
+      declareOriginal: true,
+      enableAppreciation: false,
+      publishDirectly: true,
+    });
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('MultiPost 发布选项已保存');
   });
 
   it('logs out by closing playwright session', async () => {

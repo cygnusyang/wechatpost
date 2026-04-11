@@ -1,25 +1,133 @@
-import { chromium, BrowserContext, Page } from 'playwright';
+import { chromium, BrowserContext, Locator, Page } from 'playwright';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
+import * as fs from 'fs';
+import MarkdownIt from 'markdown-it';
 
 const LOGIN_TIMEOUT_MS = 120000; // 2 minutes timeout for user to scan QR
 const POLL_INTERVAL_MS = 2000; // Check every 2 seconds for login completion
 const BUTTON_ACTIVATION_DELAY_MS = 500; // Delay for button activation after hover
-const INTERACTION_TIMEOUT_MS = 5000; // Timeout for UI interactions
+const INTERACTION_TIMEOUT_MS = 5000; // Timeout for best-effort page settle
+const DIALOG_TIMEOUT_MS = 30000;
+const UI_SETTLE_MS = 500;
 
 export class PlaywrightService {
   private outputChannel: vscode.OutputChannel;
   private context: BrowserContext | null = null;
   private authenticatedPage: Page | null = null;
   private userDataDir: string;
+  private markdownParser: MarkdownIt;
 
   constructor(outputChannel: vscode.OutputChannel) {
     this.outputChannel = outputChannel;
+    this.markdownParser = new MarkdownIt({
+      breaks: true,
+      linkify: true,
+    });
     // Set up user data directory for persistent login state
     const homeDir = os.homedir();
     this.userDataDir = path.join(homeDir, '.multipost', 'playwright-user-data');
     this.log(`User data directory: ${this.userDataDir}`);
+  }
+
+  private toWechatPlainText(markdown: string): string {
+    return markdown
+      .replace(/```mermaid[\s\S]*?```/g, '[Mermaid 图]')
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/^###\s+(.+)$/gm, '$1')
+      .replace(/^##\s+(.+)$/gm, '【$1】')
+      .replace(/^#\s+(.+)$/gm, '【$1】')
+      .replace(/^\s*[-*]\s+/gm, '• ')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/__(.*?)__/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\[(.*?)\]\((.*?)\)/g, '$1 ($2)')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  private async renderMermaidToSvgDataUrl(diagramCode: string): Promise<string | null> {
+    if (!this.context) {
+      return null;
+    }
+
+    const renderPage = await this.context.newPage();
+    try {
+      await renderPage.setContent('<html><body><div id="root"></div></body></html>');
+      await renderPage.addScriptTag({ url: 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js' });
+
+      const svg = await renderPage.evaluate(async (code) => {
+        const mermaidApi = (window as any).mermaid;
+        mermaidApi.initialize({ startOnLoad: false, securityLevel: 'loose' });
+        const renderId = `mp-mermaid-${Date.now()}`;
+        const result = await mermaidApi.render(renderId, code);
+        return result.svg as string;
+      }, diagramCode);
+
+      return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+    } catch (error) {
+      this.log(`Failed to render Mermaid diagram, fallback to text block: ${error}`, 'warn');
+      return null;
+    } finally {
+      await renderPage.close();
+    }
+  }
+
+  private async renderMarkdownToWechatHtml(markdown: string): Promise<string> {
+    const mermaidBlocks: string[] = [];
+    const markdownWithPlaceholders = markdown.replace(/```mermaid\s*([\s\S]*?)```/g, (_match, mermaidCode: string) => {
+      const token = `MP_MERMAID_PLACEHOLDER_${mermaidBlocks.length}`;
+      mermaidBlocks.push(mermaidCode.trim());
+      return token;
+    });
+
+    let html = this.markdownParser.render(markdownWithPlaceholders);
+
+    for (let i = 0; i < mermaidBlocks.length; i += 1) {
+      const token = `MP_MERMAID_PLACEHOLDER_${i}`;
+      const diagramCode = mermaidBlocks[i];
+      const dataUrl = await this.renderMermaidToSvgDataUrl(diagramCode);
+      const fallbackText = `<pre><code>${this.markdownParser.utils.escapeHtml(diagramCode)}</code></pre>`;
+      const mermaidHtml = dataUrl
+        ? `<p><img src="${dataUrl}" alt="Mermaid Diagram ${i + 1}" style="max-width: 100%;" /></p>`
+        : fallbackText;
+
+      html = html.replace(`<p>${token}</p>`, mermaidHtml).replace(token, mermaidHtml);
+    }
+
+    return html;
+  }
+
+  private async fillBodyWithFormattedMarkdown(markdown: string): Promise<void> {
+    if (!this.authenticatedPage) {
+      throw new Error('No authenticated page available.');
+    }
+
+    const html = await this.renderMarkdownToWechatHtml(markdown);
+
+    try {
+      await this.authenticatedPage.evaluate((renderedHtml) => {
+        const candidates = Array.from(document.querySelectorAll('[contenteditable="true"]')) as HTMLElement[];
+        const visibleCandidates = candidates.filter((el) => el.offsetParent !== null);
+        const editor = visibleCandidates[0];
+
+        if (!editor) {
+          throw new Error('Editable content area not found.');
+        }
+
+        editor.focus();
+        editor.innerHTML = renderedHtml;
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+      }, html);
+    } catch (error) {
+      this.log(`Failed to inject formatted HTML, fallback to plain text fill: ${error}`, 'warn');
+      const fallbackText = this.toWechatPlainText(markdown);
+      await this.authenticatedPage.locator('section').click();
+      const contentSelector = this.authenticatedPage.locator('div').filter({ hasText: /^从这里开始写正文$/ }).nth(5);
+      await contentSelector.waitFor({ timeout: 60000 });
+      await contentSelector.fill(fallbackText);
+    }
   }
 
   private log(message: string, level: 'info' | 'error' | 'warn' = 'info'): void {
@@ -33,39 +141,41 @@ export class PlaywrightService {
     }
   }
 
+  private async waitForUiSettled(page: Page, delayMs: number = UI_SETTLE_MS): Promise<void> {
+    await page.waitForTimeout(delayMs);
+  }
+
+  private async maybeWaitForNavigation(page: Page, timeoutMs: number = INTERACTION_TIMEOUT_MS): Promise<void> {
+    try {
+      await page.waitForLoadState('domcontentloaded', { timeout: timeoutMs });
+    } catch {
+      // Most modal interactions do not navigate; ignore timeout here.
+    }
+    await this.waitForUiSettled(page);
+  }
+
+  private async clickAndStabilize(locator: Locator, page: Page, timeoutMs: number = DIALOG_TIMEOUT_MS): Promise<void> {
+    const target = locator.first();
+    await target.waitFor({ state: 'visible', timeout: timeoutMs });
+    await target.click();
+    await this.maybeWaitForNavigation(page);
+  }
+
   /**
    * Check if there's an existing saved login state
    */
   async hasSavedLogin(): Promise<boolean> {
     this.log('Checking for saved login state...');
-    
-    try {
-      // Launch a temporary context to check if we have valid cookies
-      const context = await chromium.launchPersistentContext(this.userDataDir, {
-        headless: true,
-      });
-      
-      const page = await context.newPage();
-      await page.goto('https://mp.weixin.qq.com/', {
-        waitUntil: 'networkidle',
-      });
-      
-      // Check if we're already logged in
-      const isLoggedIn = await this.waitForLogin(page, 5000); // Short timeout for check
-      
-      await context.close();
-      
-      if (isLoggedIn) {
-        this.log('Found valid saved login state');
-        return true;
-      } else {
-        this.log('No valid saved login state found');
-        return false;
-      }
-    } catch (error) {
-      this.log(`Error checking saved login: ${error}`, 'error');
-      return false;
-    }
+
+    const cookieFiles = [
+      path.join(this.userDataDir, 'Default', 'Cookies'),
+      path.join(this.userDataDir, 'Default', 'Network', 'Cookies'),
+      path.join(this.userDataDir, 'Default', 'Network', 'Cookies-journal'),
+    ];
+
+    const hasLoginData = cookieFiles.some((cookiePath) => fs.existsSync(cookiePath));
+    this.log(hasLoginData ? 'Found local login profile data' : 'No local login profile data found');
+    return hasLoginData;
   }
 
   /**
@@ -276,16 +386,13 @@ export class PlaywrightService {
       // Step 2: Navigate through interface (strictly following test.py logic)
       // 内容管理 → 草稿箱 → 新的创作 → 写新文章
       this.log('[DEBUG] Step 2: Clicking "内容管理"');
-      await page.getByText('内容管理').click();
-      await page.waitForLoadState('networkidle', { timeout: 60000 });
+      await this.clickAndStabilize(page.getByText('内容管理'), page);
 
       this.log('[DEBUG] Step 3: Clicking "草稿箱"');
-      await page.getByRole('link', { name: '草稿箱' }).click();
-      await page.waitForLoadState('networkidle', { timeout: 60000 });
+      await this.clickAndStabilize(page.getByRole('link', { name: '草稿箱' }), page);
 
       this.log('[DEBUG] Step 4: Clicking add button');
-      await page.locator('.weui-desktop-card__icon-add').click();
-      await page.waitForLoadState('networkidle', { timeout: 60000 });
+      await this.clickAndStabilize(page.locator('.weui-desktop-card__icon-add'), page);
 
       this.log('[DEBUG] Step 5: Clicking "写新文章" and waiting for popup');
       let page1: Page;
@@ -301,7 +408,7 @@ export class PlaywrightService {
 
       if (page1 && page1 !== page) {
         this.log('[DEBUG] New page opened for article editing');
-        await page1.waitForLoadState('networkidle', { timeout: 60000 });
+        await page1.waitForLoadState('domcontentloaded', { timeout: 60000 });
         this.authenticatedPage = page1; // 更新为新页面
       }
 
@@ -322,17 +429,16 @@ export class PlaywrightService {
       this.log(`[DEBUG] Author filled: "${author}"`);
 
       // Step 8: Fill content (following test.py logic)
-      this.log('[DEBUG] Step 8: Filling content');
-      await this.authenticatedPage.locator('section').click();
-      const contentSelector = this.authenticatedPage.locator('div').filter({ hasText: /^从这里开始写正文$/ }).nth(5);
-      await contentSelector.waitFor({ timeout: 60000 });
-      await contentSelector.fill(content);
-      this.log(`[DEBUG] Content filled, length: ${content.length}`);
+      this.log('[DEBUG] Step 8: Filling formatted content from markdown');
+      await this.fillBodyWithFormattedMarkdown(content);
+      this.log(`[DEBUG] Formatted content filled, original markdown length: ${content.length}`);
 
       // Step 9: Click article settings (following test.py logic)
       this.log('[DEBUG] Step 9: Clicking "文章设置"');
-      await this.authenticatedPage.locator('#bot_bar_left_container').getByText('文章设置').click();
-      await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 60000 });
+      await this.clickAndStabilize(
+        this.authenticatedPage.locator('#bot_bar_left_container').getByText('文章设置'),
+        this.authenticatedPage
+      );
 
       // Step 10: Fill digest if provided (following test.py logic)
       if (digest) {
@@ -351,14 +457,13 @@ export class PlaywrightService {
       const coverButton = this.authenticatedPage.locator('.icon20_common.add_cover');
       await coverButton.waitFor({ timeout: 60000 });
       await coverButton.click();
-      await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
+      await this.maybeWaitForNavigation(this.authenticatedPage);
       await coverButton.click();
-      await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
+      await this.maybeWaitForNavigation(this.authenticatedPage);
 
       // Step 12: Click AI cover (following test.py logic)
       this.log('[DEBUG] Step 12: Clicking "AI 配图"');
-      await this.authenticatedPage.getByRole('link', { name: 'AI 配图' }).click();
-      await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 60000 });
+      await this.clickAndStabilize(this.authenticatedPage.getByRole('link', { name: 'AI 配图' }), this.authenticatedPage);
 
       // Step 13: Input description (following test.py logic)
       this.log('[DEBUG] Step 13: Inputting description for AI image');
@@ -371,34 +476,41 @@ export class PlaywrightService {
       // Step 14: Click start creation (following test.py logic)
       this.log('[DEBUG] Step 14: Clicking "开始创作"');
       await this.authenticatedPage.getByRole('button', { name: '开始创作' }).click();
-      await this.authenticatedPage.waitForTimeout(10000); // Wait for AI to generate images
+      await this.authenticatedPage.locator('.ai-image-item-wrp:visible').first().waitFor({ timeout: 60000 });
 
       // Step 15: Select image (following test.py logic)
       this.log('[DEBUG] Step 15: Selecting AI generated image');
-      const imageSelector = this.authenticatedPage.locator('div:nth-child(8) > .ai-image-list > div:nth-child(4) > .ai-image-item-wrp');
+      const imageSelector = this.authenticatedPage.locator('.ai-image-item-wrp:visible').first();
       await imageSelector.waitFor({ timeout: 60000 });
       await imageSelector.click();
       this.log('[DEBUG] Image selected');
 
       // Step 16: Click use (following test.py logic)
       this.log('[DEBUG] Step 16: Clicking "使用"');
-      await this.authenticatedPage.getByRole('button', { name: '使用' }).click();
-      await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 60000 });
+      const useButton = this.authenticatedPage.getByRole('button', { name: '使用' }).last();
+      await useButton.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+      if (!(await useButton.isEnabled())) {
+        throw new Error('AI cover "使用" button is disabled. Please ensure an image style is selected.');
+      }
+      await useButton.click();
+      await this.waitForUiSettled(this.authenticatedPage);
 
       // Step 17: Click confirm (following test.py logic)
       this.log('[DEBUG] Step 17: Clicking "确认"');
-      await this.authenticatedPage.getByRole('button', { name: '确认' }).click();
-      await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 60000 });
+      const aiConfirmDialog = this.authenticatedPage
+        .locator('.weui-desktop-dialog:visible, .dialog_wrp:visible, .popover_dialog:visible')
+        .last();
+      await aiConfirmDialog.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+      await aiConfirmDialog.getByRole('button', { name: '确认' }).first().click();
+      await aiConfirmDialog.waitFor({ state: 'hidden', timeout: DIALOG_TIMEOUT_MS });
 
       // Step 18: Set original declaration if enabled (following test.py logic)
       if (isOriginal) {
         this.log('[DEBUG] Step 18: Setting original declaration');
-        await this.authenticatedPage.getByText('原创').nth(2).click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
-        await this.authenticatedPage.getByText('文字原创').click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
+        await this.clickAndStabilize(this.authenticatedPage.getByText('原创').nth(2), this.authenticatedPage);
+        await this.clickAndStabilize(this.authenticatedPage.getByText('文字原创'), this.authenticatedPage);
         await this.authenticatedPage.locator('#js_original_edit_box').getByRole('textbox', { name: '请输入作者' }).click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
+        await this.waitForUiSettled(this.authenticatedPage);
         
         // Handle original agreement popup
         const popupPromise = this.authenticatedPage.waitForEvent('popup', { timeout: 10000 });
@@ -409,44 +521,73 @@ export class PlaywrightService {
         } catch (error) {
           this.log('[DEBUG] No popup detected for original agreement', 'warn');
         }
-        
-        await this.authenticatedPage.locator('.weui-desktop-icon-checkbox').click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
-        
+
+        const originalDialog = this.authenticatedPage
+          .locator('.weui-desktop-dialog:visible, .dialog_wrp:visible, .popover_dialog:visible')
+          .filter({ hasText: /我已阅读并同意|原创|声明/ })
+          .first();
+        await originalDialog.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+
+        // Ensure the agreement checkbox is checked before confirming.
+        const agreementText = originalDialog.getByText(/我已阅读并同意/).first();
+        if (await agreementText.isVisible({ timeout: 1500 }).catch(() => false)) {
+          let agreementCheckbox = agreementText
+            .locator('xpath=ancestor::*[self::label or self::div][1]')
+            .locator('.weui-desktop-icon-checkbox')
+            .first();
+
+          if ((await agreementCheckbox.count()) === 0) {
+            agreementCheckbox = originalDialog.locator('.weui-desktop-icon-checkbox').first();
+          }
+
+          const className = (await agreementCheckbox.getAttribute('class')) || '';
+          const isChecked = /checked|selected|active/.test(className);
+          if (!isChecked) {
+            await agreementCheckbox.click();
+            await this.waitForUiSettled(this.authenticatedPage);
+            this.log('[DEBUG] Original agreement checkbox checked');
+          }
+        }
+
         // Hover over confirm button to activate it
-        const originalConfirmButton = this.authenticatedPage.getByRole('button', { name: '确定' });
+        const originalConfirmButton = originalDialog.getByRole('button', { name: '确定' }).first();
+        await originalConfirmButton.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
         await originalConfirmButton.hover();
-        await this.authenticatedPage.waitForTimeout(500); // Waitress button to activate
+        await this.authenticatedPage.waitForTimeout(BUTTON_ACTIVATION_DELAY_MS);
         await originalConfirmButton.click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
+        await originalDialog.waitFor({ state: 'hidden', timeout: DIALOG_TIMEOUT_MS });
         this.log('[DEBUG] Original declaration set');
       }
 
       // Step 19: Set appreciation if enabled (following test.py logic)
       if (enableAppreciation) {
         this.log('[DEBUG] Step 19: Setting appreciation');
-        // await this.authenticatedPage.locator('#js_reward_setting_area').getByText('不开启').click();
-        // await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
-        await this.authenticatedPage.getByRole('textbox', { name: '选择或搜索赞赏账户' }).click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
-        await this.authenticatedPage.getByText('赞赏类型').click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
-        await this.authenticatedPage.locator('#vue_app').getByText('赞赏账户', { exact: true }).click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
-        await this.authenticatedPage.getByText('赞赏自动回复').click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
-        await this.authenticatedPage.locator('.weui-desktop-icon-checkbox').click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
-        await this.authenticatedPage.locator('.weui-desktop-icon-checkbox').click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
+        await this.clickAndStabilize(
+          this.authenticatedPage.locator('#js_reward_setting_area').getByText(/不开启|赞赏作者|公益捐赠/),
+          this.authenticatedPage
+        );
 
-        
-        // Hover over the confirm button button to activate it
-        const confirmButton = this.authenticatedPage.getByRole('button', { name: '确定' });
-        await confirmButton.hover();
-        await this.authenticatedPage.waitForTimeout(500); // Waitress button to activate
+        const rewardDialog = this.authenticatedPage
+          .locator('.weui-desktop-dialog:visible, .dialog_wrp:visible, .popover_dialog:visible')
+          .filter({ hasText: '赞赏类型' })
+          .first();
+        await rewardDialog.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+
+        const accountInput = rewardDialog.getByRole('textbox', { name: /选择或搜索赞赏账户|赞赏账户/ }).first();
+        if (await accountInput.isVisible({ timeout: 1500 }).catch(() => false)) {
+          await accountInput.click();
+          await accountInput.press('ArrowDown');
+          await accountInput.press('Enter');
+        }
+
+        const confirmButton = rewardDialog.getByRole('button', { name: '确定' }).first();
+        await confirmButton.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+        if (!(await confirmButton.isEnabled())) {
+          await confirmButton.hover();
+          await this.authenticatedPage.waitForTimeout(BUTTON_ACTIVATION_DELAY_MS);
+        }
         await confirmButton.click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
+        await rewardDialog.waitFor({ state: 'hidden', timeout: DIALOG_TIMEOUT_MS });
         this.log('[DEBUG] Appreciation enabled');
       }
 
@@ -487,44 +628,42 @@ export class PlaywrightService {
       // Step 21: Save as draft or publish (following test.py logic)
       if (publish) {
         this.log('[DEBUG] Step 21: Publishing article');
-        await this.authenticatedPage.getByRole('button', { name: '发表' }).click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 60000 });
+        await this.clickAndStabilize(this.authenticatedPage.getByRole('button', { name: '发表' }), this.authenticatedPage);
 
         this.log('[DEBUG] Step 22: Clicking "群发通知"');
-        await this.authenticatedPage.getByText('群发通知', { exact: true }).click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
+        await this.clickAndStabilize(this.authenticatedPage.getByText('群发通知', { exact: true }), this.authenticatedPage);
 
         this.log('[DEBUG] Step 23: Clicking "定时发表"');
-        await this.authenticatedPage.getByText('定时发表', { exact: true }).click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
+        await this.clickAndStabilize(this.authenticatedPage.getByText('定时发表', { exact: true }), this.authenticatedPage);
 
         this.log('[DEBUG] Step 24: Confirming publish');
-        await this.authenticatedPage.locator('#vue_app').getByRole('button', { name: '发表' }).click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 60000 });
+        await this.clickAndStabilize(
+          this.authenticatedPage.locator('#vue_app').getByRole('button', { name: '发表' }),
+          this.authenticatedPage
+        );
 
         this.log('[DEBUG] Step 25: Clicking "未开启群发通知"');
-        await this.authenticatedPage.getByText('未开启群发通知', { exact: true }).click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
+        await this.clickAndStabilize(this.authenticatedPage.getByText('未开启群发通知', { exact: true }), this.authenticatedPage);
 
         this.log('[DEBUG] Step 26: Clicking content recommendation notice');
-        await this.authenticatedPage.getByText('内容将展示在公众号主页，若允许平台推荐，内容有可能被推荐至看一看或其他推荐场景。').click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 30000 });
+        await this.clickAndStabilize(
+          this.authenticatedPage.getByText('内容将展示在公众号主页，若允许平台推荐，内容有可能被推荐至看一看或其他推荐场景。'),
+          this.authenticatedPage
+        );
 
         this.log('[DEBUG] Step 27: Clicking "继续发表"');
-        await this.authenticatedPage.getByRole('button', { name: '继续发表' }).click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 60000 });
+        await this.clickAndStabilize(this.authenticatedPage.getByRole('button', { name: '继续发表' }), this.authenticatedPage);
 
         this.log('[DEBUG] Article published successfully');
         vscode.window.showInformationMessage('Article published successfully in Chrome');
       } else {
         this.log('[DEBUG] Step 21: Saving as draft');
         const saveButton = this.authenticatedPage.getByRole('button', { name: '保存为草稿' });
+        await saveButton.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
         await saveButton.hover();
-        await this.authenticatedPage.waitForTimeout(500); // Waitress button to activate
-        await saveButton.click();        
-        await saveButton.waitFor({ timeout: 60000 });
+        await this.authenticatedPage.waitForTimeout(BUTTON_ACTIVATION_DELAY_MS);
         await saveButton.click();
-        await this.authenticatedPage.waitForLoadState('networkidle', { timeout: 60000 });
+        await this.waitForUiSettled(this.authenticatedPage, 1000);
 
         this.log('[DEBUG] Draft saved successfully');
         vscode.window.showInformationMessage('Draft saved successfully in Chrome');
