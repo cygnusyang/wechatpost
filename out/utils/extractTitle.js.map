@@ -1,1 +1,0 @@
-{"version":3,"file":"extractTitle.js","sourceRoot":"","sources":["../../src/utils/extractTitle.ts"],"names":[],"mappings":";;AAGA,oCAGC;AAND;;GAEG;AACH,SAAgB,YAAY,CAAC,QAAgB;IAC3C,MAAM,KAAK,GAAG,QAAQ,CAAC,KAAK,CAAC,aAAa,CAAC,CAAC;IAC5C,OAAO,KAAK,CAAC,CAAC,CAAC,KAAK,CAAC,CAAC,CAAC,CAAC,IAAI,EAAE,CAAC,CAAC,CAAC,IAAI,CAAC;AACxC,CAAC"}
