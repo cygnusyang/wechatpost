@@ -11,7 +11,11 @@ const POLL_INTERVAL_MS = 2000; // Check every 2 seconds for login completion
 const BUTTON_ACTIVATION_DELAY_MS = 500; // Delay for button activation after hover
 const INTERACTION_TIMEOUT_MS = 5000; // Timeout for best-effort page settle
 const DIALOG_TIMEOUT_MS = 30000;
+const DIALOG_CLOSE_TIMEOUT_MS = 10000; // Shorter timeout for dialog close operations
 const UI_SETTLE_MS = 500;
+const PROCESS_SINGLETON_RECOVERY_DELAY_MS = 400;
+const DIALOG_SELECTOR = '.weui-desktop-dialog:visible, .dialog_wrp:visible, .popover_dialog:visible';
+const REWARD_DIALOG_POLL_INTERVAL_MS = 200;
 
 export class PlaywrightService {
   private outputChannel: vscode.OutputChannel;
@@ -30,6 +34,148 @@ export class PlaywrightService {
     const homeDir = os.homedir();
     this.userDataDir = path.join(homeDir, '.multipost', 'playwright-user-data');
     this.log(`User data directory: ${this.userDataDir}`);
+  }
+
+  private getPersistentLaunchArgs(): string[] {
+    return [
+      '--start-maximized',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-crashpad',
+      '--disable-breakpad',
+    ];
+  }
+
+  private isProcessSingletonError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /ProcessSingleton|profile.+already in use|another instance of Chromium/i.test(message);
+  }
+
+  private clearProfileSingletonLocks(): void {
+    const singletonCandidates = [
+      'SingletonLock',
+      'SingletonCookie',
+      'SingletonSocket',
+      'SingletonSocketLock',
+      path.join('Default', 'SingletonLock'),
+      path.join('Default', 'SingletonCookie'),
+      path.join('Default', 'SingletonSocket'),
+      path.join('Default', 'SingletonSocketLock'),
+    ];
+
+    for (const relativePath of singletonCandidates) {
+      const targetPath = path.join(this.userDataDir, relativePath);
+      try {
+        if (!fs.existsSync(targetPath)) {
+          continue;
+        }
+        fs.rmSync(targetPath, { force: true, recursive: true });
+        this.log(`Removed stale Chromium singleton artifact: ${targetPath}`, 'warn');
+      } catch (cleanupError) {
+        this.log(`Failed to remove singleton artifact ${targetPath}: ${cleanupError}`, 'warn');
+      }
+    }
+  }
+
+  private async launchPersistentContextWithRecovery(): Promise<BrowserContext> {
+    try {
+      return await chromium.launchPersistentContext(this.userDataDir, {
+        headless: false,
+        args: this.getPersistentLaunchArgs(),
+      });
+    } catch (launchError) {
+      if (!this.isProcessSingletonError(launchError)) {
+        throw launchError;
+      }
+
+      this.log(
+        'Chromium profile appears locked (ProcessSingleton). Attempting one cleanup-and-retry cycle.',
+        'warn'
+      );
+
+      await this.close();
+      this.clearProfileSingletonLocks();
+      await new Promise((resolve) => setTimeout(resolve, PROCESS_SINGLETON_RECOVERY_DELAY_MS));
+
+      return chromium.launchPersistentContext(this.userDataDir, {
+        headless: false,
+        args: this.getPersistentLaunchArgs(),
+      });
+    }
+  }
+
+  private attachContextLifecycleHandlers(context: BrowserContext): void {
+    context.once('close', () => {
+      if (this.context === context) {
+        this.log('Browser context closed; clearing Playwright session references', 'warn');
+        this.context = null;
+        this.authenticatedPage = null;
+      }
+    });
+  }
+
+  private getOpenPageFromContext(context: BrowserContext): Page | null {
+    try {
+      const pages = context.pages();
+      for (let index = pages.length - 1; index >= 0; index -= 1) {
+        const page = pages[index];
+        if (!page.isClosed()) {
+          return page;
+        }
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
+  private setAuthenticatedPage(page: Page): void {
+    this.authenticatedPage = page;
+
+    page.once('close', () => {
+      if (this.authenticatedPage !== page) {
+        return;
+      }
+
+      const context = this.context;
+      if (!context) {
+        this.authenticatedPage = null;
+        return;
+      }
+
+      const fallbackPage = this.getOpenPageFromContext(context);
+      if (fallbackPage) {
+        this.log('Authenticated page closed; switching to another open page', 'warn');
+        this.setAuthenticatedPage(fallbackPage);
+        return;
+      }
+
+      this.log('Authenticated page closed; no open page remains in current context', 'warn');
+      this.authenticatedPage = null;
+    });
+  }
+
+  private getActiveSessionPage(): Page {
+    const context = this.context;
+    if (!context) {
+      throw new Error('No authenticated browser session. Please login first.');
+    }
+
+    const currentPage = this.authenticatedPage;
+    if (currentPage && !currentPage.isClosed()) {
+      return currentPage;
+    }
+
+    const fallbackPage = this.getOpenPageFromContext(context);
+    if (fallbackPage) {
+      this.log('Recovered active page from existing browser context');
+      this.setAuthenticatedPage(fallbackPage);
+      return fallbackPage;
+    }
+
+    this.authenticatedPage = null;
+    throw new Error('No authenticated browser page is available. Please login again.');
   }
 
   private toWechatPlainText(markdown: string): string {
@@ -387,6 +533,132 @@ export class PlaywrightService {
   }
 
   /**
+   * Safely wait for a dialog to close with
+   * Uses a shorter timeout and provides detailed logging
+   */
+  private async waitForDialogClose(dialogLocator: Locator, dialogName: string): Promise<void> {
+    try {
+      await dialogLocator.waitFor({ state: 'hidden', timeout: DIALOG_CLOSE_TIMEOUT_MS });
+      this.log(`[DEBUG] Dialog "${dialogName}" closed successfully`);
+    } catch (error) {
+      // Log the error but don't throw - the dialog might have already closed or changed state
+      this.log(`[DEBUG] Dialog "${dialogName}" close wait completed with state: ${error instanceof Error ? error.message : String(error)}`, 'warn');
+      
+      // Verify if dialog is actually still visible
+      const isVisible = await dialogLocator.isVisible().catch(() => false);
+      if (isVisible) {
+        this.log(`[WARN] Dialog "${dialogName}" is still visible after close attempt`, 'warn');
+        // Try to close it by pressing Escape as a fallback
+        try {
+          await dialogLocator.page()?.keyboard.press('Escape');
+          await this.waitForUiSettled(dialogLocator.page()!, 200);
+          this.log(`[DEBUG] Attempted to close dialog "${dialogName}" via Escape key`);
+        } catch (escapeError) {
+          this.log(`[WARN] Failed to close dialog "${dialogName}" via Escape: ${escapeError}`, 'warn');
+        }
+      }
+    }
+  }
+
+  /**
+   * Get a dialog locator with the specified filter text
+   * Centralizes dialog selection logic for better maintainability
+   */
+  private getDialogLocator(filterText: string | RegExp): Locator {
+    return this.authenticatedPage!.locator(DIALOG_SELECTOR).filter({ hasText: filterText }).first();
+  }
+
+  private async findRewardDialog(timeoutMs: number = DIALOG_TIMEOUT_MS): Promise<Locator> {
+    const page = this.authenticatedPage!;
+    const rewardDialogCandidates: Locator[] = [
+      page
+        .locator(DIALOG_SELECTOR)
+        .filter({
+          has: page.getByRole('textbox', { name: /选择或搜索赞赏账户/ }),
+        })
+        .first(),
+      page
+        .locator(DIALOG_SELECTOR)
+        .filter({ hasText: /赞赏类型|赞赏自动回复/ })
+        .first(),
+    ];
+
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      for (const candidate of rewardDialogCandidates) {
+        const isVisible = await candidate.isVisible().catch(() => false);
+        if (isVisible) {
+          return candidate;
+        }
+      }
+      await page.waitForTimeout(REWARD_DIALOG_POLL_INTERVAL_MS);
+    }
+
+    throw new Error('Unable to locate appreciation settings dialog.');
+  }
+
+  private async openRewardDialog(): Promise<Locator> {
+    const page = this.authenticatedPage!;
+    const rewardSettingArea = page.locator('#js_reward_setting_area').first();
+    await rewardSettingArea.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+
+    const triggerCandidates: Locator[] = [
+      rewardSettingArea.getByText('不开启', { exact: true }).first(),
+      rewardSettingArea.getByText('已开启').first(),
+      rewardSettingArea.getByText('赞赏').first(),
+      rewardSettingArea.locator('.weui-desktop-btn, .weui-desktop-switch, .weui-desktop-icon-checkbox').first(),
+      rewardSettingArea,
+    ];
+
+    for (const trigger of triggerCandidates) {
+      const matchCount = await trigger.count().catch(() => 0);
+      if (matchCount === 0) {
+        continue;
+      }
+
+      try {
+        await trigger.click();
+        await this.waitForUiSettled(page);
+      } catch {
+        continue;
+      }
+
+      try {
+        const rewardDialog = await this.findRewardDialog(8000);
+        this.log('[DEBUG] Reward dialog opened');
+        return rewardDialog;
+      } catch {
+        // Keep trying with the next trigger candidate.
+      }
+    }
+
+    throw new Error('Unable to open appreciation settings dialog.');
+  }
+
+  private async getAppreciationCheckbox(rewardDialog: Locator): Promise<Locator> {
+    const checkboxCandidates: Locator[] = [
+      rewardDialog
+        .locator('xpath=.//*[contains(normalize-space(.), "统一")]//*[contains(@class, "weui-desktop-icon-checkbox")]')
+        .first(),
+      rewardDialog
+        .locator('xpath=.//*[contains(normalize-space(.), "赞赏自动回复")]//*[contains(@class, "weui-desktop-icon-checkbox")]')
+        .first(),
+      rewardDialog.locator('.weui-desktop-icon-checkbox').last(),
+      rewardDialog.locator('.weui-desktop-icon-checkbox').first(),
+    ];
+
+    for (const candidate of checkboxCandidates) {
+      const matchCount = await candidate.count().catch(() => 0);
+      if (matchCount > 0) {
+        await candidate.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+        return candidate;
+      }
+    }
+
+    throw new Error('Unable to locate appreciation checkbox in reward dialog.');
+  }
+
+  /**
    * Check if there's an existing saved login state
    */
   async hasSavedLogin(): Promise<boolean> {
@@ -409,17 +681,9 @@ export class PlaywrightService {
   async restoreLogin(): Promise<void> {
     this.log('Restoring saved login session...');
     
-    const context = await chromium.launchPersistentContext(this.userDataDir, {
-      headless: false,
-      args: [
-        '--start-maximized',
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-crashpad',
-        '--disable-breakpad',
-      ],
-    });
+    const context = await this.launchPersistentContextWithRecovery();
     this.context = context;
+    this.attachContextLifecycleHandlers(context);
 
     try {
       const page = await context.newPage();
@@ -441,7 +705,7 @@ export class PlaywrightService {
       this.log('Login session restored successfully');
 
       // Keep browser open for authenticated session
-      this.authenticatedPage = page;
+      this.setAuthenticatedPage(page);
       this.log('Login restoration completed, browser kept open for authenticated operations');
 
     } catch (error) {
@@ -457,17 +721,9 @@ export class PlaywrightService {
   async startFirstTimeLogin(): Promise<void> {
     this.log('Starting first-time login flow');
 
-    const browser = await chromium.launchPersistentContext(this.userDataDir, {
-      headless: false,
-      args: [
-        '--start-maximized',
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-crashpad',
-        '--disable-breakpad',
-      ],
-    });
+    const browser = await this.launchPersistentContextWithRecovery();
     this.context = browser;
+    this.attachContextLifecycleHandlers(browser);
 
     try {
       const page = await browser.newPage();
@@ -492,7 +748,7 @@ export class PlaywrightService {
       this.log('Login detected');
 
       // Keep browser open for authenticated session
-      this.authenticatedPage = page;
+      this.setAuthenticatedPage(page);
       this.log('Login flow completed, browser kept open for authenticated operations');
 
     } catch (error) {
@@ -599,16 +855,23 @@ export class PlaywrightService {
       linkColor: '#0969da',
     }
   ): Promise<string> {
+    let page = this.getActiveSessionPage();
+    this.setAuthenticatedPage(page);
     if (!this.context || !this.authenticatedPage) {
       throw new Error('No authenticated browser session. Please login first.');
     }
-
-    const page = this.authenticatedPage;
     this.log(`[DEBUG] Starting draft creation following test.py logic`);
     this.log(`[DEBUG] Title: "${title}", Author: "${author}", Content length: ${content.length}`);
 
     try {
-      await page.bringToFront();
+      try {
+        await page.bringToFront();
+      } catch (bringToFrontError) {
+        this.log(`Initial page activation failed, trying session recovery: ${bringToFrontError}`, 'warn');
+        const recoveredPage = this.getActiveSessionPage();
+        await recoveredPage.bringToFront();
+        page = recoveredPage;
+      }
 
       // Step 1: ensure current browser page is in authenticated state
       const isLoggedIn = await this.waitForLogin(page);
@@ -642,7 +905,7 @@ export class PlaywrightService {
       if (page1 && page1 !== page) {
         this.log('[DEBUG] New page opened for article editing');
         await page1.waitForLoadState('domcontentloaded', { timeout: 60000 });
-        this.authenticatedPage = page1; // 更新为新页面
+        this.setAuthenticatedPage(page1); // 更新为新页面
       }
 
       // Step 6: Fill title (following test.py logic)
@@ -735,11 +998,11 @@ export class PlaywrightService {
       // Step 17: Click confirm (following test.py logic)
       this.log('[DEBUG] Step 17: Clicking "确认"');
       const aiConfirmDialog = this.authenticatedPage
-        .locator('.weui-desktop-dialog:visible, .dialog_wrp:visible, .popover_dialog:visible')
+        .locator(DIALOG_SELECTOR)
         .last();
       await aiConfirmDialog.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
       await aiConfirmDialog.getByRole('button', { name: '确认' }).first().click();
-      await aiConfirmDialog.waitFor({ state: 'hidden', timeout: DIALOG_TIMEOUT_MS });
+      await this.waitForDialogClose(aiConfirmDialog, 'AI配图确认');
 
       // Step 18: Set original declaration if enabled (following test.py logic)
       if (isOriginal) {
@@ -761,10 +1024,7 @@ export class PlaywrightService {
           this.log('[DEBUG] No popup detected for original agreement', 'warn');
         }
 
-        const originalDialog = this.authenticatedPage
-          .locator('.weui-desktop-dialog:visible, .dialog_wrp:visible, .popover_dialog:visible')
-          .filter({ hasText: /我已阅读并同意|原创|声明/ })
-          .first();
+        const originalDialog = this.getDialogLocator(/我已阅读并同意|原创|声明/);
         await originalDialog.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
 
         // Keep behavior aligned with playwright-wechat.py but avoid toggling off:
@@ -782,37 +1042,75 @@ export class PlaywrightService {
           this.log('[DEBUG] Original agreement checkbox already checked, skipping click');
         }
 
-        await originalDialog.getByRole('button', { name: '确定' }).first().click();
-        await originalDialog.waitFor({ state: 'hidden', timeout: DIALOG_TIMEOUT_MS });
+        const confirmButton = originalDialog.getByRole('button', { name: '确定' }).first();
+        await confirmButton.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+        await confirmButton.click();
+        await this.waitForDialogClose(originalDialog, '原创声明');
         this.log('[DEBUG] Original declaration set');
       }
 
-      // Step 19: Set appreciation if enabled (following test.py logic)
-      if (enableAppreciation) {
-        this.log('[DEBUG] Step 19: Setting appreciation');
-        await this.authenticatedPage.locator('#js_reward_setting_area').getByText('不开启').click();
-        await this.waitForUiSettled(this.authenticatedPage);
+      // Step 19: Set appreciation according to config (following test.py logic)
+      this.log(`[DEBUG] Step 19: ${enableAppreciation ? 'Enabling' : 'Disabling'} appreciation`);
 
-        const rewardDialog = this.authenticatedPage
-          .locator('.weui-desktop-dialog:visible, .dialog_wrp:visible, .popover_dialog:visible')
-          .filter({ hasText: '赞赏类型' })
-          .first();
-        await rewardDialog.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+      try {
+        const rewardDialog = await this.openRewardDialog();
 
-        // Align with playwright-wechat.py sequence
-        await rewardDialog.getByRole('textbox', { name: '选择或搜索赞赏账户' }).click();
-        await this.waitForUiSettled(this.authenticatedPage);
-        await rewardDialog.getByText('赞赏类型').click();
-        await this.waitForUiSettled(this.authenticatedPage);
-        await this.authenticatedPage.locator('#vue_app').getByText('赞赏账户', { exact: true }).click();
-        await this.waitForUiSettled(this.authenticatedPage);
-        await rewardDialog.getByText('赞赏自动回复').click();
-        await this.waitForUiSettled(this.authenticatedPage);
-        await rewardDialog.locator('.weui-desktop-icon-checkbox').first().click();
-        await this.waitForUiSettled(this.authenticatedPage);
-        await rewardDialog.getByRole('button', { name: '确定' }).first().click();
-        await rewardDialog.waitFor({ state: 'hidden', timeout: DIALOG_TIMEOUT_MS });
-        this.log('[DEBUG] Appreciation enabled');
+        if (enableAppreciation) {
+          const rewardAccountInput = rewardDialog.getByRole('textbox', { name: '选择或搜索赞赏账户' }).first();
+          await rewardAccountInput.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+          await rewardAccountInput.click();
+          await this.waitForUiSettled(this.authenticatedPage);
+
+          const rewardTypeTab = rewardDialog.getByText('赞赏类型').first();
+          await rewardTypeTab.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+          await rewardTypeTab.click();
+          await this.waitForUiSettled(this.authenticatedPage);
+
+          const rewardAccountOption = this.authenticatedPage.locator('#vue_app').getByText('赞赏账户', { exact: true }).first();
+          await rewardAccountOption.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+          await rewardAccountOption.click();
+          await this.waitForUiSettled(this.authenticatedPage);
+
+          const autoReplyOption = rewardDialog.getByText('赞赏自动回复').first();
+          await autoReplyOption.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+          await autoReplyOption.click();
+          await this.waitForUiSettled(this.authenticatedPage);
+
+          // Ensure we click the real appreciation option (prefer "统一", fallback to known checkbox targets).
+          const appreciationAgreementCheckbox = await this.getAppreciationCheckbox(rewardDialog);
+          const appreciationCheckboxClass = (await appreciationAgreementCheckbox.getAttribute('class')) || '';
+          const appreciationAriaChecked = await appreciationAgreementCheckbox.getAttribute('aria-checked');
+          const appreciationChecked =
+            /(checked|selected|active|on)/i.test(appreciationCheckboxClass) || appreciationAriaChecked === 'true';
+          if (!appreciationChecked) {
+            await appreciationAgreementCheckbox.click();
+            await this.waitForUiSettled(this.authenticatedPage);
+            this.log('[DEBUG] Appreciation checkbox checked');
+          } else {
+            this.log('[DEBUG] Appreciation checkbox already checked, skipping click');
+          }
+        } else {
+          const disableOption = rewardDialog.getByText('不开启', { exact: true }).first();
+          await disableOption.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+          await disableOption.click();
+          await this.waitForUiSettled(this.authenticatedPage);
+          this.log('[DEBUG] Appreciation set to "不开启"');
+        }
+
+        const confirmButton = rewardDialog.getByRole('button', { name: '确定' }).first();
+        await confirmButton.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+        await confirmButton.click();
+
+        await this.waitForDialogClose(rewardDialog, '赞赏类型');
+        this.log(`[DEBUG] Appreciation ${enableAppreciation ? 'enabled' : 'disabled'}`);
+      } catch (appreciationError) {
+        this.log(
+          `[ERROR] Failed to set appreciation: ${appreciationError instanceof Error ? appreciationError.message : String(appreciationError)}`,
+          'error'
+        );
+        throw new Error(
+          `Failed to set appreciation: ${appreciationError instanceof Error ? appreciationError.message : String(appreciationError)}`
+        );
       }
 
       // Step 20: Set collection if provided (following test.py logic)
@@ -820,14 +1118,11 @@ export class PlaywrightService {
         this.log(`[DEBUG] Step 20: Setting collection: ${defaultCollection}`);
         await this.authenticatedPage.locator('#js_article_tags_area').getByText('未添加').click();
 
-        const collectionDialog = this.authenticatedPage
-          .locator('.weui-desktop-dialog:visible, .dialog_wrp:visible, .popover_dialog:visible')
-          .filter({ hasText: '每篇文章最多添加1个合集' })
-          .first();
-        await collectionDialog.waitFor({ state: 'visible', timeout: 30000 });
+        const collectionDialog = this.getDialogLocator('每篇文章最多添加1个合集');
+        await collectionDialog.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
 
         const collectionInput = collectionDialog.getByRole('textbox', { name: '请选择合集' }).first();
-        await collectionInput.waitFor({ state: 'visible', timeout: 30000 });
+        await collectionInput.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
         await collectionInput.click();
 
         try {
@@ -843,9 +1138,9 @@ export class PlaywrightService {
         }
 
         const collectionConfirmButton = collectionDialog.getByRole('button', { name: '确认' }).first();
-        await collectionConfirmButton.waitFor({ state: 'visible', timeout: 30000 });
+        await collectionConfirmButton.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
         await collectionConfirmButton.click();
-        await collectionDialog.waitFor({ state: 'hidden', timeout: 30000 });
+        await this.waitForDialogClose(collectionDialog, '合集');
         this.log(`[DEBUG] Collection set: ${defaultCollection}`);
       }
 
@@ -923,6 +1218,22 @@ export class PlaywrightService {
    * Check if we have an active authenticated session
    */
   isSessionActive(): boolean {
-    return !!(this.context && this.authenticatedPage);
+    if (!this.context) {
+      return false;
+    }
+
+    const page = this.authenticatedPage;
+    if (page && !page.isClosed()) {
+      return true;
+    }
+
+    const fallbackPage = this.getOpenPageFromContext(this.context);
+    if (fallbackPage) {
+      this.setAuthenticatedPage(fallbackPage);
+      return true;
+    }
+
+    this.authenticatedPage = null;
+    return false;
   }
 }
