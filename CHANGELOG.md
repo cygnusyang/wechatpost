@@ -1,5 +1,18 @@
 # Change Log
 
+## 1.0.0 (2026-04-11)
+
+- 🎉 **Major Release**: Persistent login state with Playwright user data directory
+- ✨ **Feature**: Login state now persists across VSCode restarts - no need to scan QR code every time
+- 🔧 **Improve**: Browser session saved to `~/.multipost/playwright-user-data`
+- 🔧 **Improve**: Added `hasSavedLogin()` and `restoreLogin()` methods for session management
+- 🔧 **Improve**: Better UI interaction helpers with `clickAndStabilize()` and `waitForUiSettled()`
+- 🔧 **Improve**: Replaced `networkidle` waits with `domcontentloaded` for faster execution
+- 🔧 **Improve**: Enhanced Mermaid rendering diagram support
+- 🔧 **Improve**: Simplified original declaration and appreciation handling
+- 🐛 **Fix**: Better collection selection with fallback to first option
+- 🧹 **Cleanup**: Removed unused files and simplified codebase
+
 ## 0.5.8 (2026-04-11)
 
 - 🐛 Fix: Original declaration logic - added "原创" and "文字原创" clicks, and original agreement popup handling
