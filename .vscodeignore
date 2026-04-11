@@ -1,15 +1,17 @@
 # Node dependencies
-# Don't exclude entire node_modules - we need all production dependencies for require to work
-# Only exclude unnecessary parts
-node_modules/.cache/**
-node_modules/*/node_modules/**
-node_modules/*/test/**
-node_modules/*/tests/**
-node_modules/*/*.md
-node_modules/*/*.yml
-node_modules/*/*.yaml
-# Keep all production dependencies (including canvas, node-fetch, etc.)
-!node_modules/**
+# Exclude all node_modules - VSCode extensions don't need them
+node_modules/**
+
+# Development tools
+.kilo/**
+
+# TypeScript build cache
+tsconfig.tsbuildinfo
+
+# Test files and results
+checkWeChatLoggedInPage.js
+playwright-wechat.py
+test-results/**
 
 # Out of directory
 src/**
