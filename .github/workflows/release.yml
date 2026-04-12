@@ -26,18 +26,18 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build
+        run: npm run compile
 
-      - name: Package release asset
-        run: |
-          mkdir -p release
-          cp -r dist/* release/ || true
-          tar -czf multipost-${GITHUB_REF_NAME}.tar.gz release
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+
+      - name: Package extension
+        run: npx vsce package
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: multipost-${{ github.ref_name }}.tar.gz
+          files: multipost-${{ github.ref_name }}.vsix
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
