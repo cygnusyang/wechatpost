@@ -12,6 +12,15 @@ jest.mock('playwright', () => ({
 }));
 
 describe('PlaywrightService', () => {
+  const contentStyle = {
+    themePreset: 'classic',
+    bodyFontSize: 16,
+    lineHeight: 1.85,
+    textColor: '#1f2329',
+    headingColor: '#0f172a',
+    linkColor: '#0969da',
+  } as const;
+
   const singletonRelPaths = [
     'SingletonLock',
     'SingletonCookie',
@@ -97,5 +106,99 @@ describe('PlaywrightService', () => {
     } finally {
       fs.rmSync(userDataDir, { recursive: true, force: true });
     }
+  });
+
+  it('falls back to eval runtime injection when script tag loading is blocked', async () => {
+    const service = new PlaywrightService({
+      appendLine: jest.fn(),
+      show: jest.fn(),
+      dispose: jest.fn(),
+      name: 'test',
+    } as any);
+
+    const page = {
+      evaluate: jest
+        .fn()
+        .mockResolvedValueOnce(false) // initial runtime check
+        .mockResolvedValueOnce(false) // check after addScriptTag
+        .mockResolvedValueOnce(true), // check after eval fallback
+      addScriptTag: jest.fn().mockRejectedValue(new Error('Refused to load script due to CSP')),
+    };
+
+    jest.spyOn(service as any, 'getMermaidRuntimeSource').mockResolvedValue('window.mermaid = {};');
+
+    const ready = await (service as any).ensureMermaidRuntime(page);
+    expect(ready).toBe(true);
+    expect(page.addScriptTag).toHaveBeenCalledTimes(1);
+    expect((service as any).getMermaidRuntimeSource).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders mermaid on isolated page to avoid editor-page navigation interference', async () => {
+    const service = new PlaywrightService({
+      appendLine: jest.fn(),
+      show: jest.fn(),
+      dispose: jest.fn(),
+      name: 'test',
+    } as any);
+
+    const renderPage = {
+      goto: jest.fn().mockResolvedValue(undefined),
+      evaluate: jest.fn().mockResolvedValue('data:image/png;base64,AAAA'),
+      close: jest.fn().mockResolvedValue(undefined),
+      isClosed: jest.fn().mockReturnValue(false),
+    };
+
+    (service as any).context = {
+      newPage: jest.fn().mockResolvedValue(renderPage),
+    };
+    jest.spyOn(service as any, 'ensureMermaidRuntime').mockResolvedValue(true);
+
+    const result = await (service as any).renderMermaidToPngDataUrl('graph TD\nA-->B');
+
+    expect(result).toBe('data:image/png;base64,AAAA');
+    expect((service as any).context.newPage).toHaveBeenCalledTimes(1);
+    expect(renderPage.goto).toHaveBeenCalledTimes(1);
+    expect(renderPage.evaluate).toHaveBeenCalledTimes(1);
+    expect(renderPage.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('replaces mermaid placeholders with rendered image html', async () => {
+    const service = new PlaywrightService({
+      appendLine: jest.fn(),
+      show: jest.fn(),
+      dispose: jest.fn(),
+      name: 'test',
+    } as any);
+
+    jest
+      .spyOn(service as any, 'renderMermaidToPngDataUrl')
+      .mockResolvedValue('data:image/png;base64,AAAA');
+
+    const html = await (service as any).renderMarkdownToWechatHtml(
+      '```mermaid\ngraph TD\nA-->B\n```',
+      contentStyle
+    );
+
+    expect(html).toContain('data:image/png;base64,AAAA');
+    expect(html).not.toContain('MP_MERMAID_PLACEHOLDER_0');
+  });
+
+  it('falls back to mermaid code block when rendering fails', async () => {
+    const service = new PlaywrightService({
+      appendLine: jest.fn(),
+      show: jest.fn(),
+      dispose: jest.fn(),
+      name: 'test',
+    } as any);
+
+    jest.spyOn(service as any, 'renderMermaidToPngDataUrl').mockResolvedValue(null);
+
+    const html = await (service as any).renderMarkdownToWechatHtml(
+      '```mermaid\ngraph TD\nA-->B\n```',
+      contentStyle
+    );
+
+    expect(html).toContain('language-mermaid');
+    expect(html).toContain('graph TD');
   });
 });

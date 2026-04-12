@@ -16,6 +16,13 @@ const UI_SETTLE_MS = 500;
 const PROCESS_SINGLETON_RECOVERY_DELAY_MS = 400;
 const DIALOG_SELECTOR = '.weui-desktop-dialog:visible, .dialog_wrp:visible, .popover_dialog:visible';
 const REWARD_DIALOG_POLL_INTERVAL_MS = 200;
+const MERMAID_LOCAL_RUNTIME_RELATIVE_PATH = path.join('mermaid', 'dist', 'mermaid.min.js');
+
+interface MermaidUploadTask {
+  token: string;
+  filePath: string;
+  fallbackText: string;
+}
 
 export class PlaywrightService {
   private outputChannel: vscode.OutputChannel;
@@ -23,6 +30,7 @@ export class PlaywrightService {
   private authenticatedPage: Page | null = null;
   private userDataDir: string;
   private markdownParser: MarkdownIt;
+  private mermaidRuntimeSource: string | null = null;
 
   constructor(outputChannel: vscode.OutputChannel) {
     this.outputChannel = outputChannel;
@@ -34,6 +42,81 @@ export class PlaywrightService {
     const homeDir = os.homedir();
     this.userDataDir = path.join(homeDir, '.multipost', 'playwright-user-data');
     this.log(`User data directory: ${this.userDataDir}`);
+  }
+
+  private async getMermaidRuntimeSource(): Promise<string | null> {
+    if (this.mermaidRuntimeSource) {
+      return this.mermaidRuntimeSource;
+    }
+
+    try {
+      const runtimeCandidates: string[] = [];
+      try {
+        runtimeCandidates.push(require.resolve(MERMAID_LOCAL_RUNTIME_RELATIVE_PATH));
+      } catch {
+        // ignore and try fallback path below
+      }
+      runtimeCandidates.push(path.join(process.cwd(), 'node_modules', MERMAID_LOCAL_RUNTIME_RELATIVE_PATH));
+
+      let scriptSource: string | null = null;
+      for (const candidate of runtimeCandidates) {
+        try {
+          scriptSource = fs.readFileSync(candidate, 'utf8');
+          this.log(`[DEBUG] Mermaid runtime loaded from local path: ${candidate}`);
+          break;
+        } catch {
+          // Try next candidate.
+        }
+      }
+
+      if (!scriptSource) {
+        this.log(
+          `Unable to load local Mermaid runtime. Tried: ${runtimeCandidates.join(', ')}`,
+          'warn'
+        );
+        return null;
+      }
+
+      if (!scriptSource.includes('mermaid')) {
+        this.log('Local Mermaid runtime script looks invalid', 'warn');
+        return null;
+      }
+
+      this.mermaidRuntimeSource = scriptSource;
+      return scriptSource;
+    } catch (error) {
+      this.log(`Failed to load local Mermaid runtime script: ${error}`, 'warn');
+      return null;
+    }
+  }
+
+  private async ensureMermaidRuntime(page: Page): Promise<boolean> {
+    const hasMermaid = await page.evaluate(() => typeof (window as any).mermaid !== 'undefined');
+    if (hasMermaid) {
+      return true;
+    }
+
+    const runtimeSource = await this.getMermaidRuntimeSource();
+    if (!runtimeSource) {
+      return false;
+    }
+
+    const hasMermaidAfterEval = await page.evaluate((scriptSource) => {
+      try {
+        if (typeof (window as any).mermaid === 'undefined') {
+          (0, eval)(scriptSource);
+        }
+        return typeof (window as any).mermaid !== 'undefined';
+      } catch {
+        return false;
+      }
+    }, runtimeSource);
+
+    if (!hasMermaidAfterEval) {
+      this.log('Mermaid runtime is still unavailable after eval fallback', 'warn');
+    }
+
+    return hasMermaidAfterEval;
   }
 
   private getPersistentLaunchArgs(): string[] {
@@ -242,29 +325,40 @@ export class PlaywrightService {
     return lines.join('\n');
   }
 
-  private async renderMermaidToSvgDataUrl(diagramCode: string): Promise<string | null> {
-    if (!this.authenticatedPage) {
+  private async renderMermaidToPngDataUrl(diagramCode: string): Promise<string | null> {
+    const context = this.context;
+    if (!context) {
       return null;
     }
 
-    const page = this.authenticatedPage;
-
+    let renderPage: Page | null = null;
     try {
-      const hasMermaid = await page.evaluate(() => typeof (window as any).mermaid !== 'undefined');
-      if (!hasMermaid) {
-        try {
-          await page.addScriptTag({ url: 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js' });
-        } catch (loadError) {
-          this.log(`Failed to load Mermaid script in current page: ${loadError}`, 'warn');
-          return null;
-        }
+      renderPage = await context.newPage();
+      await renderPage.goto('about:blank', { waitUntil: 'domcontentloaded' });
+
+      const runtimeReady = await this.ensureMermaidRuntime(renderPage);
+      if (!runtimeReady) {
+        this.log('Mermaid runtime is unavailable in isolated render page', 'warn');
+        return null;
       }
 
-      const svg = await page.evaluate(async (code) => {
+      const pngDataUrl = await renderPage.evaluate(async (code) => {
         const mermaidApi = (window as any).mermaid;
         if (!mermaidApi) {
           return null;
         }
+
+        const parseDimension = (value: string | null): number | null => {
+          if (!value) {
+            return null;
+          }
+          const match = value.trim().match(/^([0-9]+(?:\.[0-9]+)?)/);
+          if (!match) {
+            return null;
+          }
+          const parsed = Number.parseFloat(match[1]);
+          return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+        };
 
         mermaidApi.initialize({ startOnLoad: false, securityLevel: 'loose' });
         const renderId = `mp-mermaid-${Date.now()}`;
@@ -277,20 +371,94 @@ export class PlaywrightService {
 
         try {
           const result = await mermaidApi.render(renderId, code, container);
-          return result.svg as string;
+
+          const parser = new DOMParser();
+          const svgDoc = parser.parseFromString(result.svg as string, 'image/svg+xml');
+          const svgEl = svgDoc.querySelector('svg');
+          if (!svgEl) {
+            return null;
+          }
+
+          let width = parseDimension(svgEl.getAttribute('width'));
+          let height = parseDimension(svgEl.getAttribute('height'));
+          const viewBox = svgEl.getAttribute('viewBox');
+          if ((!width || !height) && viewBox) {
+            const parts = viewBox
+              .trim()
+              .split(/\s+/)
+              .map((item) => Number.parseFloat(item));
+            if (parts.length === 4 && Number.isFinite(parts[2]) && Number.isFinite(parts[3])) {
+              width = width ?? parts[2];
+              height = height ?? parts[3];
+            }
+          }
+
+          if (!width || !height) {
+            width = 1200;
+            height = 675;
+          }
+
+          const maxDimension = 2000;
+          const scale = Math.min(1, maxDimension / Math.max(width, height));
+          const finalWidth = Math.max(1, Math.round(width * scale));
+          const finalHeight = Math.max(1, Math.round(height * scale));
+
+          const svgBlob = new Blob([result.svg as string], { type: 'image/svg+xml;charset=utf-8' });
+          const svgUrl = URL.createObjectURL(svgBlob);
+
+          try {
+            const pngUrl = await new Promise<string | null>((resolve) => {
+              const image = new Image();
+              image.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = finalWidth;
+                canvas.height = finalHeight;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) {
+                  resolve(null);
+                  return;
+                }
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+                resolve(canvas.toDataURL('image/png'));
+              };
+              image.onerror = () => resolve(null);
+              image.src = svgUrl;
+            });
+            return pngUrl;
+          } finally {
+            URL.revokeObjectURL(svgUrl);
+          }
         } finally {
           container.remove();
         }
       }, diagramCode);
 
-      if (!svg) {
+      if (!pngDataUrl) {
         return null;
       }
 
-      return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+      const approxBytes = Math.floor(((pngDataUrl.length - 'data:image/png;base64,'.length) * 3) / 4);
+      const maxBytes = 2 * 1024 * 1024;
+      if (approxBytes > maxBytes) {
+        this.log(
+          `Mermaid diagram is too large after PNG render (${approxBytes} bytes), fallback to code block`,
+          'warn'
+        );
+        return null;
+      }
+
+      return pngDataUrl;
     } catch (error) {
       this.log(`Failed to render Mermaid diagram, fallback to text block: ${error}`, 'warn');
       return null;
+    } finally {
+      if (renderPage && !renderPage.isClosed()) {
+        await renderPage.close().catch((closeError) => {
+          this.log(`Failed to close Mermaid render page: ${closeError}`, 'warn');
+        });
+      }
     }
   }
 
@@ -436,6 +604,26 @@ export class PlaywrightService {
     return `<section style="max-width:760px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans CJK SC','Helvetica Neue',Arial,sans-serif;word-break:break-word;color:${safeStyle.textColor};">${styled}</section>`;
   }
 
+  private async writeDataUrlToTempPng(dataUrl: string, index: number): Promise<string | null> {
+    try {
+      const prefix = 'data:image/png;base64,';
+      if (!dataUrl.startsWith(prefix)) {
+        return null;
+      }
+      const base64 = dataUrl.slice(prefix.length);
+      const buffer = Buffer.from(base64, 'base64');
+      const filePath = path.join(
+        os.tmpdir(),
+        `multipost-mermaid-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}.png`
+      );
+      fs.writeFileSync(filePath, buffer);
+      return filePath;
+    } catch (error) {
+      this.log(`Failed to write Mermaid PNG temp file: ${error}`, 'warn');
+      return null;
+    }
+  }
+
   private async renderMarkdownToWechatHtml(markdown: string, style: ContentStyleSettings): Promise<string> {
     const mermaidBlocks: string[] = [];
     const markdownWithPlaceholders = markdown.replace(/```mermaid\s*([\s\S]*?)```/g, (_match, mermaidCode: string) => {
@@ -446,19 +634,101 @@ export class PlaywrightService {
 
     let html = this.markdownParser.render(markdownWithPlaceholders);
 
+    // 先替换 Mermaid 占位符，再处理代码块（避免相互影响）
     for (let i = 0; i < mermaidBlocks.length; i += 1) {
       const token = `MP_MERMAID_PLACEHOLDER_${i}`;
       const diagramCode = mermaidBlocks[i];
-      const dataUrl = await this.renderMermaidToSvgDataUrl(diagramCode);
-      const fallbackText = `<pre><code>${this.markdownParser.utils.escapeHtml(diagramCode)}</code></pre>`;
+      const dataUrl = await this.renderMermaidToPngDataUrl(diagramCode);
+      const fallbackText = `<pre><code class="language-mermaid">${this.markdownParser.utils.escapeHtml(diagramCode)}</code></pre>`;
       const mermaidHtml = dataUrl
         ? `<p><img src="${dataUrl}" alt="Mermaid Diagram ${i + 1}" style="max-width: 100%;" /></p>`
         : fallbackText;
 
-      html = html.replace(`<p>${token}</p>`, mermaidHtml).replace(token, mermaidHtml);
+      // 更健壮的替换逻辑
+      const pPattern = new RegExp(`<p>${token}</p>`, 'g');
+      const tokenPattern = new RegExp(token, 'g');
+
+      html = html.replace(pPattern, mermaidHtml).replace(tokenPattern, mermaidHtml);
+
+      this.log(`[DEBUG] Mermaid diagram ${i + 1} ${dataUrl ? 'rendered' : 'fallback to code block'}`);
     }
 
+    // 修复代码块换行符被压缩的问题 - 确保 pre 标签中的内容保留换行符
+    html = html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, (_match, attrs, content) => {
+      // 微信公众号编辑器可能会压缩代码块中的换行符
+      // 我们需要确保换行符被正确地保留和渲染
+      let processedContent = content;
+
+      // 方法1：将换行符替换为 <br> 标签（更可靠）
+      processedContent = processedContent.replace(/\n/g, '<br>');
+
+      // 同时确保空格和制表符也被正确保留
+      processedContent = processedContent.replace(/  /g, '&nbsp;&nbsp;');
+      processedContent = processedContent.replace(/\t/g, '&nbsp;&nbsp;&nbsp;&nbsp;');
+
+      return `<pre><code${attrs}>${processedContent}</code></pre>`;
+    });
+
     return this.applyThemedStyles(html, style);
+  }
+
+  private async renderMarkdownToWechatHtmlWithUploadPlan(
+    markdown: string,
+    style: ContentStyleSettings
+  ): Promise<{ html: string; tasks: MermaidUploadTask[] }> {
+    const mermaidBlocks: string[] = [];
+    const markdownWithPlaceholders = markdown.replace(/```mermaid\s*([\s\S]*?)```/g, (_match, mermaidCode: string) => {
+      const token = `MP_MERMAID_PLACEHOLDER_${mermaidBlocks.length}`;
+      mermaidBlocks.push(mermaidCode.trim());
+      return token;
+    });
+
+    let html = this.markdownParser.render(markdownWithPlaceholders);
+    const tasks: MermaidUploadTask[] = [];
+
+    for (let i = 0; i < mermaidBlocks.length; i += 1) {
+      const token = `MP_MERMAID_PLACEHOLDER_${i}`;
+      const diagramCode = mermaidBlocks[i];
+      const dataUrl = await this.renderMermaidToPngDataUrl(diagramCode);
+      const fallbackText = `<pre><code class="language-mermaid">${this.markdownParser.utils.escapeHtml(diagramCode)}</code></pre>`;
+
+      let replacement = fallbackText;
+      if (dataUrl) {
+        const filePath = await this.writeDataUrlToTempPng(dataUrl, i);
+        if (filePath) {
+          const uploadToken = `MP_MERMAID_UPLOAD_TOKEN_${i}_${Date.now()}`;
+          replacement = `<p>${uploadToken}</p>`;
+          tasks.push({
+            token: uploadToken,
+            filePath,
+            fallbackText: '[Mermaid 图]',
+          });
+          this.log(`[DEBUG] Mermaid diagram ${i + 1} rendered to temp file: ${filePath}`);
+        } else {
+          this.log(`[DEBUG] Mermaid diagram ${i + 1} temp file write failed, fallback to code block`, 'warn');
+        }
+      } else {
+        this.log(`[DEBUG] Mermaid diagram ${i + 1} fallback to code block`, 'warn');
+      }
+
+      const pPattern = new RegExp(`<p>${token}</p>`, 'g');
+      const tokenPattern = new RegExp(token, 'g');
+      html = html.replace(pPattern, replacement).replace(tokenPattern, replacement);
+    }
+
+    // Keep code block line breaks visible in WeChat editor.
+    html = html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, (_match, attrs, content) => {
+      let processedContent = content;
+      processedContent = processedContent.replace(/\n/g, '<br>');
+      processedContent = processedContent.replace(/  /g, '&nbsp;&nbsp;');
+      processedContent = processedContent.replace(/\t/g, '&nbsp;&nbsp;&nbsp;&nbsp;');
+      return `<pre><code${attrs}>${processedContent}</code></pre>`;
+    });
+
+    return {
+      html: this.applyThemedStyles(html, style),
+      tasks,
+    };
   }
 
   private async fillBodyWithFormattedMarkdown(markdown: string, style: ContentStyleSettings): Promise<void> {
@@ -1212,6 +1482,7 @@ export class PlaywrightService {
       this.context = null;
       this.authenticatedPage = null;
     }
+    this.mermaidRuntimeSource = null;
   }
 
   /**

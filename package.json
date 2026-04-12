@@ -133,6 +133,7 @@
   },
   "dependencies": {
     "markdown-it": "^14.1.0",
+    "mermaid": "^10.9.1",
     "playwright": "^1.59.1"
   },
   "devDependencies": {
