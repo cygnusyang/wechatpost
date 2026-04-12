@@ -17,6 +17,8 @@ const PROCESS_SINGLETON_RECOVERY_DELAY_MS = 400;
 const DIALOG_SELECTOR = '.weui-desktop-dialog:visible, .dialog_wrp:visible, .popover_dialog:visible';
 const REWARD_DIALOG_POLL_INTERVAL_MS = 200;
 const MERMAID_LOCAL_RUNTIME_RELATIVE_PATH = path.join('mermaid', 'dist', 'mermaid.min.js');
+const MERMAID_UPLOAD_WAIT_MS = 30000;
+const MERMAID_UPLOAD_INPUT_SETTLE_MS = 250;
 
 interface MermaidUploadTask {
   token: string;
@@ -624,6 +626,67 @@ export class PlaywrightService {
     }
   }
 
+  private isLatexFormula(text: string): boolean {
+    if (/[\\^_{}]/.test(text)) return true;
+    if (/[α-ωΑ-Ω]/.test(text)) return true;
+    if (/[∑∏∫∂∇∞≠≤≥±×÷√]/.test(text)) return true;
+    return false;
+  }
+
+  /**
+   * 处理 LaTeX 公式，将其转换为图片
+   */
+  private processLatex(content: string): string {
+    const LATEX_API = 'https://latex.codecogs.com/png.latex';
+
+    content = content.replace(/\$\$([^$]+)\$\$/g, (match, latex) => {
+      if (!this.isLatexFormula(latex)) return match;
+      const encoded = encodeURIComponent(latex.trim());
+      return `<p style="text-align: center;"><img src="${LATEX_API}?\\dpi{150}${encoded}" alt="formula" style="vertical-align: middle; max-width: 100%;"></p>`;
+    });
+
+    content = content.replace(/\$([^$]+)\$/g, (match, latex) => {
+      if (!this.isLatexFormula(latex)) return match;
+      const encoded = encodeURIComponent(latex.trim());
+      return `<img src="${LATEX_API}?\\dpi{120}${encoded}" alt="formula" style="vertical-align: middle;">`;
+    });
+
+    return content;
+  }
+
+  /**
+   * 移除外部链接（微信不允许非 mp.weixin.qq.com 域名的链接）
+   * 将 <a href="外部链接">文字</a> 转换为 文字
+   */
+  private stripExternalLinks(content: string): string {
+    return content.replace(
+      /<a\s+[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi,
+      (match, href, text) => {
+        // 保留微信域名的链接
+        if (href && (
+          href.includes('mp.weixin.qq.com') ||
+          href.includes('weixin.qq.com') ||
+          href.startsWith('#') ||  // 锚点链接
+          href.startsWith('javascript:')  // JS 链接
+        )) {
+          return match;
+        }
+        // 外部链接只保留文字
+        return text;
+      }
+    );
+  }
+
+  /**
+   * 压缩 HTML 标签间的空白
+   */
+  private compactHtml(content: string): string {
+    return content
+      .replace(/>\s+</g, '><') // 移除标签间的空白
+      .replace(/\s+/g, ' ') // 将多个空格合并为一个
+      .trim();
+  }
+
   private async renderMarkdownToWechatHtml(markdown: string, style: ContentStyleSettings): Promise<string> {
     const mermaidBlocks: string[] = [];
     const markdownWithPlaceholders = markdown.replace(/```mermaid\s*([\s\S]*?)```/g, (_match, mermaidCode: string) => {
@@ -633,6 +696,9 @@ export class PlaywrightService {
     });
 
     let html = this.markdownParser.render(markdownWithPlaceholders);
+
+    // 处理 LaTeX 公式
+    html = this.processLatex(html);
 
     // 先替换 Mermaid 占位符，再处理代码块（避免相互影响）
     for (let i = 0; i < mermaidBlocks.length; i += 1) {
@@ -652,6 +718,12 @@ export class PlaywrightService {
 
       this.log(`[DEBUG] Mermaid diagram ${i + 1} ${dataUrl ? 'rendered' : 'fallback to code block'}`);
     }
+
+    // 处理外部链接（只保留微信域名链接）
+    html = this.stripExternalLinks(html);
+
+    // 压缩 HTML 标签
+    html = this.compactHtml(html);
 
     // 修复代码块换行符被压缩的问题 - 确保 pre 标签中的内容保留换行符
     html = html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, (_match, attrs, content) => {
@@ -731,12 +803,239 @@ export class PlaywrightService {
     };
   }
 
+  private async getEditorState(token?: string): Promise<{ hasToken: boolean; imageCount: number }> {
+    if (!this.authenticatedPage) {
+      return { hasToken: false, imageCount: 0 };
+    }
+
+    return this.authenticatedPage.evaluate((searchToken) => {
+      const editors = Array.from(document.querySelectorAll('[contenteditable="true"]')) as HTMLElement[];
+      const visibleEditors = editors.filter((el) => el.offsetParent !== null);
+      const editor = visibleEditors[0];
+      if (!editor) {
+        return { hasToken: false, imageCount: 0 };
+      }
+      const text = editor.innerText || '';
+      return {
+        hasToken: searchToken ? text.includes(searchToken) : false,
+        imageCount: editor.querySelectorAll('img').length,
+      };
+    }, token);
+  }
+
+  private async focusEditorAtToken(token: string): Promise<boolean> {
+    if (!this.authenticatedPage) {
+      return false;
+    }
+
+    return this.authenticatedPage.evaluate((searchToken) => {
+      const editors = Array.from(document.querySelectorAll('[contenteditable="true"]')) as HTMLElement[];
+      const visibleEditors = editors.filter((el) => el.offsetParent !== null);
+      const editor = visibleEditors[0];
+      if (!editor) {
+        return false;
+      }
+
+      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+      let targetNode: Text | null = null;
+      let targetOffset = -1;
+
+      while (walker.nextNode()) {
+        const node = walker.currentNode as Text;
+        const offset = node.data.indexOf(searchToken);
+        if (offset >= 0) {
+          targetNode = node;
+          targetOffset = offset;
+          break;
+        }
+      }
+
+      if (!targetNode || targetOffset < 0) {
+        return false;
+      }
+
+      editor.focus();
+      const selection = window.getSelection();
+      if (!selection) {
+        return false;
+      }
+
+      const range = document.createRange();
+      range.setStart(targetNode, targetOffset);
+      range.setEnd(targetNode, targetOffset + searchToken.length);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return true;
+    }, token);
+  }
+
+  private async replaceTokenInEditor(token: string, replacementText: string): Promise<boolean> {
+    if (!this.authenticatedPage) {
+      return false;
+    }
+
+    return this.authenticatedPage.evaluate(
+      ({ searchToken, replacement }) => {
+        const editors = Array.from(document.querySelectorAll('[contenteditable="true"]')) as HTMLElement[];
+        const visibleEditors = editors.filter((el) => el.offsetParent !== null);
+        const editor = visibleEditors[0];
+        if (!editor) {
+          return false;
+        }
+
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+        const touchedParagraphs = new Set<HTMLElement>();
+        let replaced = false;
+
+        while (walker.nextNode()) {
+          const node = walker.currentNode as Text;
+          if (!node.data.includes(searchToken)) {
+            continue;
+          }
+          node.data = node.data.split(searchToken).join(replacement);
+          replaced = true;
+          const paragraph = node.parentElement?.closest('p');
+          if (paragraph) {
+            touchedParagraphs.add(paragraph);
+          }
+        }
+
+        if (!replaced) {
+          return false;
+        }
+
+        if (!replacement.trim()) {
+          touchedParagraphs.forEach((paragraph) => {
+            if ((paragraph.innerText || '').trim() === '') {
+              paragraph.remove();
+            }
+          });
+        }
+
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      },
+      { searchToken: token, replacement: replacementText }
+    );
+  }
+
+  private async waitForMermaidUploadResult(token: string, baselineImageCount: number): Promise<boolean> {
+    if (!this.authenticatedPage) {
+      return false;
+    }
+
+    try {
+      await this.authenticatedPage.waitForFunction(
+        ({ searchToken, baseline }) => {
+          const editors = Array.from(document.querySelectorAll('[contenteditable="true"]')) as HTMLElement[];
+          const visibleEditors = editors.filter((el) => el.offsetParent !== null);
+          const editor = visibleEditors[0];
+          if (!editor) {
+            return false;
+          }
+          const text = editor.innerText || '';
+          const imageCount = editor.querySelectorAll('img').length;
+          return !text.includes(searchToken) || imageCount > baseline;
+        },
+        { searchToken: token, baseline: baselineImageCount },
+        { timeout: MERMAID_UPLOAD_WAIT_MS }
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async tryUploadImageAtCursor(filePath: string, token: string): Promise<boolean> {
+    if (!this.authenticatedPage) {
+      return false;
+    }
+
+    const selectors = [
+      'input[type="file"][accept*="image" i]',
+      'input[type="file"][accept*=".png" i]',
+      'input[type="file"][name*="image" i]',
+      'input[type="file"]',
+    ];
+
+    for (const selector of selectors) {
+      const inputs = this.authenticatedPage.locator(selector);
+      const count = Math.min(await inputs.count().catch(() => 0), 10);
+      for (let i = 0; i < count; i += 1) {
+        const baseline = await this.getEditorState(token);
+        if (!baseline.hasToken) {
+          return true;
+        }
+
+        try {
+          await inputs.nth(i).setInputFiles(filePath, { timeout: 5000 });
+          await this.authenticatedPage.waitForTimeout(MERMAID_UPLOAD_INPUT_SETTLE_MS);
+        } catch {
+          continue;
+        }
+
+        const uploaded = await this.waitForMermaidUploadResult(token, baseline.imageCount);
+        if (uploaded) {
+          this.log(`[DEBUG] Mermaid image uploaded via ${selector} [${i}]`);
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private removeTempFile(filePath: string): void {
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (error) {
+      this.log(`Failed to remove Mermaid temp file ${filePath}: ${error}`, 'warn');
+    }
+  }
+
+  private async uploadDeferredMermaidImages(tasks: MermaidUploadTask[]): Promise<void> {
+    if (!this.authenticatedPage || tasks.length === 0) {
+      return;
+    }
+
+    for (let i = 0; i < tasks.length; i += 1) {
+      const task = tasks[i];
+      try {
+        const hasToken = await this.getEditorState(task.token);
+        if (!hasToken.hasToken) {
+          this.log(`[DEBUG] Mermaid upload token missing before upload, skip task ${i + 1}`, 'warn');
+          continue;
+        }
+
+        const focused = await this.focusEditorAtToken(task.token);
+        if (!focused) {
+          this.log(`[DEBUG] Failed to focus Mermaid token, fallback to text for task ${i + 1}`, 'warn');
+          await this.replaceTokenInEditor(task.token, task.fallbackText);
+          continue;
+        }
+
+        const uploaded = await this.tryUploadImageAtCursor(task.filePath, task.token);
+        if (!uploaded) {
+          this.log(`[DEBUG] Mermaid image upload failed, fallback to text for task ${i + 1}`, 'warn');
+          await this.replaceTokenInEditor(task.token, task.fallbackText);
+          continue;
+        }
+
+        await this.replaceTokenInEditor(task.token, '');
+      } finally {
+        this.removeTempFile(task.filePath);
+      }
+    }
+  }
+
   private async fillBodyWithFormattedMarkdown(markdown: string, style: ContentStyleSettings): Promise<void> {
     if (!this.authenticatedPage) {
       throw new Error('No authenticated page available.');
     }
 
-    const html = await this.renderMarkdownToWechatHtml(markdown, style);
+    const { html, tasks } = await this.renderMarkdownToWechatHtmlWithUploadPlan(markdown, style);
 
     try {
       await this.authenticatedPage.evaluate((renderedHtml) => {
@@ -752,7 +1051,13 @@ export class PlaywrightService {
         editor.innerHTML = renderedHtml;
         editor.dispatchEvent(new Event('input', { bubbles: true }));
       }, html);
+
+      if (tasks.length > 0) {
+        this.log(`[DEBUG] Uploading ${tasks.length} Mermaid image(s) to editor`);
+        await this.uploadDeferredMermaidImages(tasks);
+      }
     } catch (error) {
+      tasks.forEach((task) => this.removeTempFile(task.filePath));
       this.log(`Failed to inject formatted HTML, fallback to plain text fill: ${error}`, 'warn');
       const fallbackText = this.toWechatPlainText(markdown);
       await this.authenticatedPage.locator('section').click();
@@ -769,6 +1074,43 @@ export class PlaywrightService {
   async renderMarkdownPreview(markdown: string, style: ContentStyleSettings): Promise<string> {
     const bodyMarkdown = this.stripLeadingTopLevelHeading(markdown);
     return this.renderMarkdownToWechatHtml(bodyMarkdown, style);
+  }
+
+  /**
+   * 格式化微信公众号 API 错误信息
+   */
+  private formatWechatError(res: { ret?: number; base_resp?: { ret: number } }): string {
+    const ret = res.ret ?? res.base_resp?.ret;
+
+    const errorMap: Record<number, string> = {
+      [-6]: '请输入验证码',
+      [-8]: '请输入验证码',
+      [-1]: '系统错误，请注意备份内容后重试',
+      [-2]: '参数错误，请注意备份内容后重试',
+      [-5]: '服务错误，请注意备份内容后重试',
+      [-99]: '内容超出字数，请调整',
+      [-206]: '服务负荷过大，请稍后重试',
+      [200002]: '参数错误，请注意备份内容后重试',
+      [200003]: '登录态超时，请重新登录',
+      [412]: '图文中含非法外链',
+      [62752]: '可能含有具备安全风险的链接，请检查',
+      [64502]: '你输入的微信号不存在',
+      [64505]: '发送预览失败，请稍后再试',
+      [64506]: '保存失败，链接不合法',
+      [64507]: '内容不能包含外部链接',
+      [64562]: '请勿插入非微信域名的链接',
+      [64509]: '正文中不能包含超过3个视频',
+      [64515]: '当前素材非最新内容，请重新打开并编辑',
+      [64702]: '标题超出64字长度限制',
+      [64703]: '摘要超出120字长度限制',
+      [64705]: '内容超出字数，请调整',
+      [10806]: '正文不能有违规内容，请重新编辑',
+      [10807]: '内容不能违反公众平台协议',
+      [220001]: '素材管理中的存储数量已达上限',
+      [220002]: '图片库已达到存储上限',
+    };
+
+    return errorMap[ret as number] || `同步失败 (错误码: ${ret})`;
   }
 
   private log(message: string, level: 'info' | 'error' | 'warn' = 'info'): void {

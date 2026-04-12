@@ -108,7 +108,7 @@ describe('PlaywrightService', () => {
     }
   });
 
-  it('falls back to eval runtime injection when script tag loading is blocked', async () => {
+  it('loads mermaid runtime through local-source eval injection', async () => {
     const service = new PlaywrightService({
       appendLine: jest.fn(),
       show: jest.fn(),
@@ -120,17 +120,15 @@ describe('PlaywrightService', () => {
       evaluate: jest
         .fn()
         .mockResolvedValueOnce(false) // initial runtime check
-        .mockResolvedValueOnce(false) // check after addScriptTag
-        .mockResolvedValueOnce(true), // check after eval fallback
-      addScriptTag: jest.fn().mockRejectedValue(new Error('Refused to load script due to CSP')),
+        .mockResolvedValueOnce(true), // check after eval injection
     };
 
     jest.spyOn(service as any, 'getMermaidRuntimeSource').mockResolvedValue('window.mermaid = {};');
 
     const ready = await (service as any).ensureMermaidRuntime(page);
     expect(ready).toBe(true);
-    expect(page.addScriptTag).toHaveBeenCalledTimes(1);
     expect((service as any).getMermaidRuntimeSource).toHaveBeenCalledTimes(1);
+    expect(page.evaluate).toHaveBeenCalledTimes(2);
   });
 
   it('renders mermaid on isolated page to avoid editor-page navigation interference', async () => {
@@ -200,5 +198,28 @@ describe('PlaywrightService', () => {
 
     expect(html).toContain('language-mermaid');
     expect(html).toContain('graph TD');
+  });
+
+  it('builds upload plan with token placeholders for mermaid images', async () => {
+    const service = new PlaywrightService({
+      appendLine: jest.fn(),
+      show: jest.fn(),
+      dispose: jest.fn(),
+      name: 'test',
+    } as any);
+
+    jest.spyOn(service as any, 'renderMermaidToPngDataUrl').mockResolvedValue('data:image/png;base64,AAAA');
+    jest.spyOn(service as any, 'writeDataUrlToTempPng').mockResolvedValue('/tmp/mermaid-test.png');
+
+    const result = await (service as any).renderMarkdownToWechatHtmlWithUploadPlan(
+      '```mermaid\ngraph TD\nA-->B\n```',
+      contentStyle
+    );
+
+    expect(result.tasks).toHaveLength(1);
+    expect(result.tasks[0].filePath).toBe('/tmp/mermaid-test.png');
+    expect(result.tasks[0].token).toContain('MP_MERMAID_UPLOAD_TOKEN_0_');
+    expect(result.html).toContain(result.tasks[0].token);
+    expect(result.html).not.toContain('MP_MERMAID_PLACEHOLDER_0');
   });
 });
