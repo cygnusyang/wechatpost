@@ -47,7 +47,7 @@ export class PlaywrightService {
     });
     // Set up user data directory for persistent login state
     const homeDir = os.homedir();
-    this.userDataDir = path.join(homeDir, '.wechatpost', 'playwright-user-data');
+    this.userDataDir = path.join(homeDir, '.multipost', 'playwright-user-data');
     this.log(`User data directory: ${this.userDataDir}`);
   }
 
@@ -855,7 +855,7 @@ export class PlaywrightService {
       const buffer = Buffer.from(base64, 'base64');
       const filePath = path.join(
         os.tmpdir(),
-        `wechatpost-mermaid-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}.png`
+        `multipost-mermaid-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}.png`
       );
       fs.writeFileSync(filePath, buffer);
       return filePath;

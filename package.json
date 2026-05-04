@@ -1,13 +1,13 @@
 {
-  "name": "wechatpost",
-  "displayName": "WeChatPost - WeChat Publisher",
+  "name": "multipost",
+  "displayName": "MultiPost - WeChat Publisher",
   "description": "Publish Markdown directly to WeChat Official Accounts from VSCode",
-  "version": "1.3.1",
+  "version": "1.3.0",
   "publisher": "cygnus",
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cygnusyang/wechatpost.git"
+    "url": "https://github.com/cygnus/MultiPost.git"
   },
   "license": "MIT",
   "engines": {
@@ -18,15 +18,13 @@
   ],
   "activationEvents": [
     "onLanguage:markdown",
-    "onCommand:wechatpost.uploadToWeChat",
-    "onCommand:wechatpost.logoutWeChat",
-    "onCommand:wechatpost.configurePublishOptions",
-    "onCommand:wechatpost.preview"
+    "onCommand:multipost.configurePublishOptions",
+    "onCommand:multipost.preview"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "configuration": {
-      "title": "WeChatPost",
+      "title": "MultiPost",
       "properties": {
         "wechatPublisher.defaultAuthor": {
           "type": "string",
@@ -102,24 +100,24 @@
     },
     "commands": [
       {
-        "command": "wechatpost.uploadToWeChat",
-        "title": "WeChatPost: Publish Current Markdown to WeChat",
+        "command": "multipost.uploadToWeChat",
+        "title": "MultiPost: Publish Current Markdown to WeChat",
         "icon": {
           "light": "media/icons/upload-light.svg",
           "dark": "media/icons/upload-dark.svg"
         }
       },
       {
-        "command": "wechatpost.logoutWeChat",
-        "title": "WeChatPost: Sign Out of WeChat Session"
+        "command": "multipost.logoutWeChat",
+        "title": "MultiPost: Sign Out of WeChat Session"
       },
       {
-        "command": "wechatpost.configurePublishOptions",
-        "title": "WeChatPost: Configure Publishing Options"
+        "command": "multipost.configurePublishOptions",
+        "title": "MultiPost: Configure Publishing Options"
       },
       {
-        "command": "wechatpost.preview",
-        "title": "WeChatPost: Preview WeChat Article Layout"
+        "command": "multipost.preview",
+        "title": "MultiPost: Preview WeChat Article Layout"
       }
     ]
   },
@@ -127,17 +125,11 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "clean": "rm -rf out dist coverage *.vsix tsconfig.tsbuildinfo",
-    "rebuild": "npm run clean && npm run compile",
-    "package": "vsce package",
     "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
+    "test:coverage": "jest --coverage --coverageReporters=json-summary",
     "playwright:install": "playwright install",
     "test:playwright": "playwright test",
-    "playwright:codegen": "playwright codegen",
-    "lint": "echo 'TODO: Add linting'",
-    "format": "echo 'TODO: Add formatting'"
+    "playwright:codegen": "playwright codegen"
   },
   "dependencies": {
     "markdown-it": "^14.1.0",

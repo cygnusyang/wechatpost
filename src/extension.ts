@@ -24,10 +24,10 @@ function log(message: string, level: 'info' | 'error' | 'warn' = 'info'): void {
 
 export async function activate(context: vscode.ExtensionContext) {
   // Create output channel for logging
-  outputChannel = vscode.window.createOutputChannel('WeChatPost');
+  outputChannel = vscode.window.createOutputChannel('MultiPost');
   context.subscriptions.push(outputChannel);
 
-  log('=== Starting WeChatPost extension activation ===');
+  log('=== Starting MultiPost extension activation ===');
   log(`Extension context: ${JSON.stringify({
     extensionPath: context.extensionPath,
     subscriptionsCount: context.subscriptions.length,
@@ -46,22 +46,22 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Register commands
     let disposable = vscode.commands.registerCommand(
-      'wechatpost.logoutWeChat',
+      'multipost.logoutWeChat',
       async () => {
-        log('Command invoked: wechatpost.logoutWeChat');
+        log('Command invoked: multipost.logoutWeChat');
         await playwrightService.close();
-        vscode.window.showInformationMessage('Logged out from WeChatPost');
+        vscode.window.showInformationMessage('Logged out from MultiPost');
         log('User logged out successfully');
       }
     );
     context.subscriptions.push(disposable);
-    log('Command registered: wechatpost.logoutWeChat');
+    log('Command registered: multipost.logoutWeChat');
 
     // Register Playwright-based upload command as the main command
     disposable = vscode.commands.registerCommand(
-      'wechatpost.uploadToWeChat',
+      'multipost.uploadToWeChat',
       async () => {
-        log('Command invoked: wechatpost.uploadToWeChat (Playwright Automated Upload)');
+        log('Command invoked: multipost.uploadToWeChat (Playwright Automated Upload)');
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
           vscode.window.showErrorMessage('No active editor');
@@ -87,41 +87,41 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     );
     context.subscriptions.push(disposable);
-    log('Command registered: wechatpost.uploadToWeChat');
+    log('Command registered: multipost.uploadToWeChat');
 
     disposable = vscode.commands.registerCommand(
-      'wechatpost.preview',
+      'multipost.preview',
       async () => {
-        log('Command invoked: wechatpost.preview');
+        log('Command invoked: multipost.preview');
         await previewCurrentDocument();
       }
     );
     context.subscriptions.push(disposable);
-    log('Command registered: wechatpost.preview');
+    log('Command registered: multipost.preview');
 
     disposable = vscode.commands.registerCommand(
-      'wechatpost.configurePublishOptions',
+      'multipost.configurePublishOptions',
       async () => {
-        log('Command invoked: wechatpost.configurePublishOptions');
+        log('Command invoked: multipost.configurePublishOptions');
         await configurePublishOptions();
       }
     );
     context.subscriptions.push(disposable);
-    log('Command registered: wechatpost.configurePublishOptions');
+    log('Command registered: multipost.configurePublishOptions');
 
     log('All commands registered successfully');
 
-    log('=== WeChatPost extension activation completed successfully ===');
+    log('=== MultiPost extension activation completed successfully ===');
   } catch (error) {
     const errorMsg = (error as Error).message;
     const errorStack = error instanceof Error && error.stack ? error.stack : 'No stack trace';
 
-    log(`=== WeChatPost extension activation FAILED ===`, 'error');
+    log(`=== MultiPost extension activation FAILED ===`, 'error');
     log(`Error message: ${errorMsg}`, 'error');
     log(`Stack trace: ${errorStack}`, 'error');
 
     console.error('Failed to activate extension:', error);
-    vscode.window.showErrorMessage(`Failed to activate WeChatPost: ${errorMsg}`);
+    vscode.window.showErrorMessage(`Failed to activate MultiPost: ${errorMsg}`);
     outputChannel.show(true);
     throw error;
   }
@@ -143,7 +143,7 @@ function buildPreviewWebviewHtml(title: string, bodyHtml: string): string {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WeChatPost Preview</title>
+  <title>MultiPost Preview</title>
   <style>
     :root {
       --page-bg: #f5f7fa;
@@ -199,7 +199,7 @@ function buildPreviewWebviewHtml(title: string, bodyHtml: string): string {
 </head>
 <body>
   <main class="wrap">
-    <div class="meta">WeChatPost 预览（与上传样式保持一致）</div>
+    <div class="meta">MultiPost 预览（与上传样式保持一致）</div>
     <article class="card">
       <h1 class="title">${safeTitle}</h1>
       ${bodyHtml}
@@ -224,8 +224,8 @@ async function previewCurrentDocument(): Promise<void> {
 
   const renderedHtml = await playwrightService.renderMarkdownPreview(markdown, settings.contentStyle);
   const panel = vscode.window.createWebviewPanel(
-    'wechatpostPreview',
-    `WeChatPost Preview: ${title}`,
+    'multipostPreview',
+    `MultiPost Preview: ${title}`,
     vscode.ViewColumn.Beside,
     {
       enableScripts: false,
@@ -264,7 +264,7 @@ async function promptThemePreset(
       { label: '简约 (minimal)', value: 'minimal' as const },
     ],
     {
-      title: 'WeChatPost 配置',
+      title: 'MultiPost 配置',
       placeHolder: `当前: ${currentValue}`,
       ignoreFocusOut: true,
     }
@@ -277,7 +277,7 @@ async function configurePublishOptions(): Promise<void> {
   const current = settingsService.getSettings();
 
   const defaultAuthor = await vscode.window.showInputBox({
-    title: 'WeChatPost 配置',
+    title: 'MultiPost 配置',
     prompt: '默认作者名',
     value: current.defaultAuthor,
     ignoreFocusOut: true,
@@ -287,7 +287,7 @@ async function configurePublishOptions(): Promise<void> {
   }
 
   const defaultCollection = await vscode.window.showInputBox({
-    title: 'WeChatPost 配置',
+    title: 'MultiPost 配置',
     prompt: '默认合集名',
     value: current.defaultCollection,
     ignoreFocusOut: true,
@@ -297,7 +297,7 @@ async function configurePublishOptions(): Promise<void> {
   }
 
   const digestLengthInput = await vscode.window.showInputBox({
-    title: 'WeChatPost 配置',
+    title: 'MultiPost 配置',
     prompt: '摘要长度（字符数）',
     value: String(current.digestLength),
     ignoreFocusOut: true,
@@ -319,7 +319,7 @@ async function configurePublishOptions(): Promise<void> {
   }
 
   const bodyFontSizeInput = await vscode.window.showInputBox({
-    title: 'WeChatPost 配置',
+    title: 'MultiPost 配置',
     prompt: '正文字号（px）',
     value: String(current.contentStyle.bodyFontSize),
     ignoreFocusOut: true,
@@ -336,7 +336,7 @@ async function configurePublishOptions(): Promise<void> {
   }
 
   const lineHeightInput = await vscode.window.showInputBox({
-    title: 'WeChatPost 配置',
+    title: 'MultiPost 配置',
     prompt: '正文行高（如 1.85）',
     value: String(current.contentStyle.lineHeight),
     ignoreFocusOut: true,
@@ -353,7 +353,7 @@ async function configurePublishOptions(): Promise<void> {
   }
 
   const textColorInput = await vscode.window.showInputBox({
-    title: 'WeChatPost 配置',
+    title: 'MultiPost 配置',
     prompt: '正文字色（HEX，例如 #1f2329）',
     value: current.contentStyle.textColor,
     ignoreFocusOut: true,
@@ -364,7 +364,7 @@ async function configurePublishOptions(): Promise<void> {
   }
 
   const headingColorInput = await vscode.window.showInputBox({
-    title: 'WeChatPost 配置',
+    title: 'MultiPost 配置',
     prompt: '标题颜色（HEX，例如 #0f172a）',
     value: current.contentStyle.headingColor,
     ignoreFocusOut: true,
@@ -375,7 +375,7 @@ async function configurePublishOptions(): Promise<void> {
   }
 
   const linkColorInput = await vscode.window.showInputBox({
-    title: 'WeChatPost 配置',
+    title: 'MultiPost 配置',
     prompt: '链接/强调色（HEX，例如 #0969da）',
     value: current.contentStyle.linkColor,
     ignoreFocusOut: true,
@@ -418,7 +418,7 @@ async function configurePublishOptions(): Promise<void> {
   };
 
   await settingsService.updateSettings(updated);
-  vscode.window.showInformationMessage('WeChatPost 发布选项已保存');
+  vscode.window.showInformationMessage('MultiPost 发布选项已保存');
 }
 
 /**
@@ -439,7 +439,7 @@ async function handlePlaywrightFullAutomatedUpload(
     if (!playwrightService.isSessionActive()) {
       // Check if we have a saved login state
       const hasSavedLogin = await playwrightService.hasSavedLogin();
-
+      
       if (hasSavedLogin) {
         progress.report({ message: 'Restoring saved login session...' });
         await playwrightService.restoreLogin();
