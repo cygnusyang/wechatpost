@@ -1,5 +1,16 @@
 # Change Log
 
+## 1.3.3 (2026-05-04)
+
+- 🔧 **Fix**: GitHub Actions release workflow - fix VSIX filename matching in release upload
+- 📦 **Fix**: Ensure node_modules are included in VSIX package (critical for extension loading)
+- 🏷️ **Update**: Version bump to 1.3.3 for release testing
+
+## 1.3.2 (2026-05-04)
+
+- 🔧 **Fix**: GitHub Actions release workflow - properly reference version without 'v' prefix
+- 📦 **Test**: Release v1.3.2 for workflow validation
+
 ## 1.3.1 (2026-05-04)
 
 - 🎨 **Rename**: Project renamed from MultiPost to WeChatPost for better brand alignment
