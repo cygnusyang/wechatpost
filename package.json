@@ -7,7 +7,7 @@
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cygnus/WeChatPost.git"
+    "url": "https://github.com/cygnusyang/wechatpost.git"
   },
   "license": "MIT",
   "engines": {
@@ -125,11 +125,17 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
+    "clean": "rm -rf out dist coverage *.vsix tsconfig.tsbuildinfo",
+    "rebuild": "npm run clean && npm run compile",
+    "package": "vsce package",
     "test": "jest",
-    "test:coverage": "jest --coverage --coverageReporters=json-summary",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "playwright:install": "playwright install",
     "test:playwright": "playwright test",
-    "playwright:codegen": "playwright codegen"
+    "playwright:codegen": "playwright codegen",
+    "lint": "echo 'TODO: Add linting'",
+    "format": "echo 'TODO: Add formatting'"
   },
   "dependencies": {
     "markdown-it": "^14.1.0",
