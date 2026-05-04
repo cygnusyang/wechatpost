@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ExtensionSettings, SettingsService } from './services/SettingsService';
 import { PlaywrightService } from './services/PlaywrightService';
-import { initLogger, log, showOutputChannel } from './logger';
+import { initLogger, log, showOutputChannel, getOutputChannel } from './logger';
 import { previewCurrentDocument } from './preview';
 import { configurePublishOptions } from './config';
 import { handlePlaywrightFullAutomatedUpload, getMarkdownAndTitleFromEditor } from './upload';
@@ -9,7 +9,7 @@ import { handlePlaywrightFullAutomatedUpload, getMarkdownAndTitleFromEditor } fr
 let settingsService: SettingsService;
 let playwrightService: PlaywrightService;
 
-export async function activate(context: vscode.ExtensionContext) {
+export function activate(context: vscode.ExtensionContext) {
   // Initialize logger first
   const outputChannel = initLogger(context);
 
@@ -109,7 +109,6 @@ export async function activate(context: vscode.ExtensionContext) {
     console.error('Failed to activate extension:', error);
     vscode.window.showErrorMessage(`Failed to activate WeChatPost: ${errorMessage}`);
     showOutputChannel(true);
-    throw error;
   }
 }
 

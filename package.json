@@ -18,6 +18,8 @@
   ],
   "activationEvents": [
     "onLanguage:markdown",
+    "onCommand:wechatpost.uploadToWeChat",
+    "onCommand:wechatpost.logoutWeChat",
     "onCommand:wechatpost.configurePublishOptions",
     "onCommand:wechatpost.preview"
   ],

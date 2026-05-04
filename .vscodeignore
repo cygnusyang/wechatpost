@@ -15,6 +15,7 @@ playwright-profile/**
 
 # Development tools and configs
 .kilo/**
+.claude/**
 .github/**
 .vscode/**
 !.vscode/extensions.json
