@@ -11,8 +11,8 @@
 
 ## 1.2.0 (2026-04-12)
 
-- 🎨 **Refactor**: Standardize command titles with MultiPost prefix for consistency
-- 🔧 **Update**: Rename all command titles to use 'MultiPost:' prefix
+- 🎨 **Refactor**: Standardize command titles with WeChatPost prefix for consistency
+- 🔧 **Update**: Rename all command titles to use 'WeChatPost:' prefix
 - 📝 **Update**: Update documentation files to reflect new command names
 - 🚀 **Feature**: Add GitHub Actions workflow for automated releases
 - 🔧 **Improve**: Extract version-specific changelog for GitHub releases
@@ -21,7 +21,7 @@
 
 - 🎉 **Major Release**: Persistent login state with Playwright user data directory
 - ✨ **Feature**: Login state now persists across VSCode restarts - no need to scan QR code every time
-- 🔧 **Improve**: Browser session saved to `~/.multipost/playwright-user-data`
+- 🔧 **Improve**: Browser session saved to `~/.wechatpost/playwright-user-data`
 - 🔧 **Improve**: Added `hasSavedLogin()` and `restoreLogin()` methods for session management
 - 🔧 **Improve**: Better UI interaction helpers with `clickAndStabilize()` and `waitForUiSettled()`
 - 🔧 **Improve**: Replaced `networkidle` waits with `domcontentloaded` for faster execution
@@ -57,7 +57,7 @@
 
 ## 0.5.5 (2026-04-06)
 
-- 🐛 Fix: Unified output channels - WeChatService now uses "MultiPost" channel instead of separate "MultiPost WeChat"
+- 🐛 Fix: Unified output channels - WeChatService now uses "WeChatPost" channel instead of separate "WeChatPost WeChat"
 - 🔧 Improve: Login detection - added URL token check and debug logging for better troubleshooting
 - 🏷️ Bump version to 0.5.5
 
@@ -177,7 +177,7 @@
 
 - 🔍 Add comprehensive debug logging throughout the extension
 - 🛠️ Improved error tracing for activation and command execution
-- All activation steps logged to MultiPost output channel
+- All activation steps logged to WeChatPost output channel
 - 🏷️ Bump version to 0.1.7
 
 ## 0.1.6 (2026-04-05)
@@ -226,7 +226,7 @@
 ## 0.1.0 (2026-04-05)
 
 - 🎉 Initial release
-- MultiPost - WeChat Publisher VSCode extension
+- WeChatPost - WeChat Publisher VSCode extension
 - Publish Markdown directly to WeChat Official Accounts
 - Support Mermaid diagram rendering
 - Support code highlighting

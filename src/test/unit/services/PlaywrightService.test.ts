@@ -63,7 +63,7 @@ describe('PlaywrightService', () => {
       dispose: jest.fn(),
       name: 'test',
     } as any);
-    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multipost-playwright-'));
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wechatpost-playwright-'));
     (service as any).userDataDir = userDataDir;
     const singletonPaths = singletonRelPaths.map((relPath) => path.join(userDataDir, relPath));
     for (const singletonPath of singletonPaths) {
@@ -96,7 +96,7 @@ describe('PlaywrightService', () => {
       dispose: jest.fn(),
       name: 'test',
     } as any);
-    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multipost-playwright-'));
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wechatpost-playwright-'));
     (service as any).userDataDir = userDataDir;
     const probeLockPath = path.join(userDataDir, 'SingletonLock');
     fs.writeFileSync(probeLockPath, 'lock');

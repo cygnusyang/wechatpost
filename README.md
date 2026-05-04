@@ -2,8 +2,8 @@
 
 <div align="center">
   <br />
-  <img src="https://raw.githubusercontent.com/cygnusyang/multipost/main/media/icon.png" alt="MultiPost Logo" width="128" height="128">
-  <h1 style="border-bottom: none;">🚀 MultiPost - WeChat Publisher</h1>
+  <img src="https://raw.githubusercontent.com/cygnusyang/wechatpost/main/media/icon.png" alt="WeChatPost Logo" width="128" height="128">
+  <h1 style="border-bottom: none;">🚀 WeChatPost - WeChat Publisher</h1>
   <p style="font-size: 1.2em;">One-click publish Markdown directly to WeChat Official Accounts from VSCode</p>
 </div>
 
@@ -23,7 +23,7 @@
 
 ### From VSIX File
 
-1. Download `multipost-<version>.vsix` file
+1. Download `wechatpost-<version>.vsix` file
 2. Open VSCode Extensions panel (Cmd+Shift+X / Ctrl+Shift+X)
 3. Click the top-right `...` menu
 4. Select **"Install from VSIX..."**
@@ -31,13 +31,13 @@
 
 ## 🚀 Usage
 
-All commands are prefixed with `MultiPost: ` in the command palette.
+All commands are prefixed with `WeChatPost: ` in the command palette.
 
 ### Method 1: Playwright Automated (Recommended)
 
 1. Open a `.md` Markdown file
 2. Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
-3. Type `MultiPost: Publish Current Markdown to WeChat` and execute
+3. Type `WeChatPost: Publish Current Markdown to WeChat` and execute
 4. **If not logged in**: Chrome will open automatically, scan QR code to login, save credentials, and upload
 5. **If already logged in**: Directly create draft in browser (login state persists across restarts)
 6. Mermaid diagrams are automatically rendered to images and uploaded to WeChat CDN
@@ -45,23 +45,23 @@ All commands are prefixed with `MultiPost: ` in the command palette.
 ### Method 2: Manual Cookie Mode
 
 1. **Input Cookie (Manual Login)** - Manually enter cookie copied from browser
-2. **MultiPost: Publish Current Markdown to WeChat** - Upload current Markdown to WeChat official account draft
+2. **WeChatPost: Publish Current Markdown to WeChat** - Upload current Markdown to WeChat official account draft
 
 ### Other Commands
 
-- **MultiPost: Configure Publishing Options** - Configure default author, original declaration, appreciation, collection, and content style
-- **MultiPost: Preview WeChat Article Layout** - Preview converted WeChat HTML format in sidebar
-- **MultiPost: Sign Out of WeChat Session** - Clear saved login credentials
+- **WeChatPost: Configure Publishing Options** - Configure default author, original declaration, appreciation, collection, and content style
+- **WeChatPost: Preview WeChat Article Layout** - Preview converted WeChat HTML format in sidebar
+- **WeChatPost: Sign Out of WeChat Session** - Clear saved login credentials
 
 ### Preview WeChat Format
 
 1. Open a `.md` Markdown file
-2. Open Command Palette, type `MultiPost: Preview WeChat Article Layout`
+2. Open Command Palette, type `WeChatPost: Preview WeChat Article Layout`
 3. A preview window will open showing the WeChat official account format
 
 ## ⚙️ Configuration
 
-Search for `wechatPublisher` in VSCode settings or use `MultiPost: Configure Publishing Options` command:
+Search for `wechatPublisher` in VSCode settings or use `WeChatPost: Configure Publishing Options` command:
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|

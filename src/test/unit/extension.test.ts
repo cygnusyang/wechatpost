@@ -96,10 +96,10 @@ describe('extension', () => {
     await activate(mockContext);
 
     expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(4);
-    expect(registeredCommands.has('multipost.uploadToWeChat')).toBe(true);
-    expect(registeredCommands.has('multipost.logoutWeChat')).toBe(true);
-    expect(registeredCommands.has('multipost.preview')).toBe(true);
-    expect(registeredCommands.has('multipost.configurePublishOptions')).toBe(true);
+    expect(registeredCommands.has('wechatpost.uploadToWeChat')).toBe(true);
+    expect(registeredCommands.has('wechatpost.logoutWeChat')).toBe(true);
+    expect(registeredCommands.has('wechatpost.preview')).toBe(true);
+    expect(registeredCommands.has('wechatpost.configurePublishOptions')).toBe(true);
   });
 
   it('opens preview webview for active markdown editor', async () => {
@@ -112,7 +112,7 @@ describe('extension', () => {
       },
     };
 
-    await registeredCommands.get('multipost.preview')!();
+    await registeredCommands.get('wechatpost.preview')!();
 
     expect(mockRenderMarkdownPreview).toHaveBeenCalledWith(
       '# Test Title\n\nBody',
@@ -131,7 +131,7 @@ describe('extension', () => {
   it('shows error when upload runs without active editor', async () => {
     await activate(mockContext);
 
-    await registeredCommands.get('multipost.uploadToWeChat')!();
+    await registeredCommands.get('wechatpost.uploadToWeChat')!();
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('No active editor');
   });
@@ -146,7 +146,7 @@ describe('extension', () => {
       },
     };
 
-    await registeredCommands.get('multipost.uploadToWeChat')!();
+    await registeredCommands.get('wechatpost.uploadToWeChat')!();
 
     expect(mockStartFirstTimeLogin).toHaveBeenCalledTimes(1);
     expect(mockCreateDraftInBrowser).toHaveBeenCalledWith(
@@ -188,7 +188,7 @@ describe('extension', () => {
       .mockResolvedValueOnce({ label: '否', value: false })
       .mockResolvedValueOnce({ label: '是', value: true });
 
-    await registeredCommands.get('multipost.configurePublishOptions')!();
+    await registeredCommands.get('wechatpost.configurePublishOptions')!();
 
     expect(mockUpdateSettings).toHaveBeenCalledWith({
       defaultAuthor: 'Alice',
@@ -206,16 +206,16 @@ describe('extension', () => {
         linkColor: '#0077cc',
       },
     });
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('MultiPost 发布选项已保存');
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('WeChatPost 发布选项已保存');
   });
 
   it('logs out by closing playwright session', async () => {
     await activate(mockContext);
 
-    await registeredCommands.get('multipost.logoutWeChat')!();
+    await registeredCommands.get('wechatpost.logoutWeChat')!();
 
     expect(mockClose).toHaveBeenCalledTimes(1);
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Logged out from MultiPost');
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Logged out from WeChatPost');
   });
 
   it('deactivate closes playwright session when initialized', async () => {

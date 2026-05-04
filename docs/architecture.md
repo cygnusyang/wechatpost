@@ -1,8 +1,8 @@
-# MultiPost 架构文档
+# WeChatPost 架构文档
 
 ## 项目概述
 
-MultiPost 是一个 Visual Studio Code 扩展，用于将 Markdown 文件一键发布到微信公众号。它支持 Mermaid 图表自动渲染上传，并采用 Chrome CDP（Chrome DevTools Protocol）实现全自动登录和发布流程。
+WeChatPost 是一个 Visual Studio Code 扩展，用于将 Markdown 文件一键发布到微信公众号。它支持 Mermaid 图表自动渲染上传，并采用 Chrome CDP（Chrome DevTools Protocol）实现全自动登录和发布流程。
 
 ### 核心功能
 - ✅ 完整支持 Markdown / GFM（GitHub Flavored Markdown）
@@ -59,7 +59,7 @@ graph TB
 #### 1. 扩展入口点 (`src/extension.ts`)
 - **职责**: 扩展激活、命令注册、服务初始化
 - **关键功能**:
-  - 注册三个主要命令：`multipost.preview`, `multipost.uploadToWeChat`, `multipost.logoutWeChat`
+  - 注册三个主要命令：`wechatpost.preview`, `wechatpost.uploadToWeChat`, `wechatpost.logoutWeChat`
   - 初始化所有服务实例
   - 处理 CDP 全自动上传流程
   - 管理认证状态
@@ -371,6 +371,6 @@ graph LR
 
 ## 总结
 
-MultiPost 采用分层架构设计，各组件职责清晰，通过服务接口解耦。核心价值在于将复杂的微信发布流程自动化，同时提供良好的开发体验和用户界面。架构设计考虑了扩展性、可维护性和性能，为未来功能扩展奠定了良好基础。
+WeChatPost 采用分层架构设计，各组件职责清晰，通过服务接口解耦。核心价值在于将复杂的微信发布流程自动化，同时提供良好的开发体验和用户界面。架构设计考虑了扩展性、可维护性和性能，为未来功能扩展奠定了良好基础。
 
 本架构文档提供了项目的全面视图，包括组件关系、数据流、技术决策和设计原则，可作为新开发者了解项目和后续开发的基础参考。

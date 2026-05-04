@@ -68,7 +68,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: multipost-${{ github.ref_name }}.vsix
+          files: wechatpost-${{ github.ref_name }}.vsix
           body: ${{ steps.changelog.outputs.content }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
