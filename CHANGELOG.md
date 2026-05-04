@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.3.1 (2026-05-04)
+
+- 🎨 **Rename**: Project renamed from MultiPost to WeChatPost for better brand alignment
+- 📦 **Update**: Repackage extension with new name `wechatpost-1.3.1.vsix`
+- 📝 **Docs**: Update all documentation references from MultiPost to WeChatPost
+
 ## 1.3.0 (2026-05-01)
 
 - 🐛 **Fix**: Improved article editor detection - now finds editor by matching "从这里开始写正文" text instead of using first visible contenteditable element
