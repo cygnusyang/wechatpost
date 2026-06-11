@@ -235,6 +235,127 @@ describe('PlaywrightService', () => {
     expect(result).toBe(page);
   });
 
+  it('fills the first visible matching editor field', async () => {
+    const service = new PlaywrightService({
+      appendLine: jest.fn(),
+      show: jest.fn(),
+      dispose: jest.fn(),
+      name: 'test',
+    } as any);
+
+    const absentLocator = { count: jest.fn().mockResolvedValue(0) };
+    const hiddenTarget = {
+      isVisible: jest.fn().mockResolvedValue(false),
+    };
+    const matchingTarget = {
+      isVisible: jest.fn().mockResolvedValue(true),
+      click: jest.fn().mockResolvedValue(undefined),
+      fill: jest.fn().mockResolvedValue(undefined),
+    };
+    const matchingLocator = {
+      count: jest.fn().mockResolvedValue(2),
+      nth: jest.fn((index: number) => (index === 0 ? hiddenTarget : matchingTarget)),
+    };
+
+    await (service as any).fillFirstVisible(
+      {},
+      'title',
+      [
+        { name: 'absent', locator: absentLocator },
+        { name: 'matching', locator: matchingLocator },
+      ],
+      'Article title'
+    );
+
+    expect(hiddenTarget.isVisible).toHaveBeenCalled();
+    expect(matchingTarget.isVisible).toHaveBeenCalled();
+    expect(matchingTarget.click).toHaveBeenCalled();
+    expect(matchingTarget.fill).toHaveBeenCalledWith('Article title');
+  });
+
+  it('fills a hidden backing input through the DOM fallback', async () => {
+    const service = new PlaywrightService({
+      appendLine: jest.fn(),
+      show: jest.fn(),
+      dispose: jest.fn(),
+      name: 'test',
+    } as any);
+
+    const hiddenTarget = {
+      isVisible: jest.fn().mockResolvedValue(false),
+      evaluate: jest.fn().mockResolvedValue(true),
+    };
+    const hiddenLocator = {
+      count: jest.fn().mockResolvedValue(1),
+      nth: jest.fn(() => hiddenTarget),
+    };
+
+    await (service as any).fillFirstVisible(
+      {},
+      'title',
+      [{ name: 'hidden title textarea', locator: hiddenLocator }],
+      'Article title'
+    );
+
+    expect(hiddenTarget.evaluate).toHaveBeenCalledWith(expect.any(Function), 'Article title');
+  });
+
+  it('fills a hidden backing input using Playwright forced input events', async () => {
+    const service = new PlaywrightService({
+      appendLine: jest.fn(),
+      show: jest.fn(),
+      dispose: jest.fn(),
+      name: 'test',
+    } as any);
+
+    const hiddenTarget = {
+      isVisible: jest.fn().mockResolvedValue(false),
+      fill: jest.fn().mockResolvedValue(undefined),
+      dispatchEvent: jest.fn().mockResolvedValue(undefined),
+      inputValue: jest.fn().mockResolvedValue('Article title'),
+    };
+    const hiddenLocator = {
+      count: jest.fn().mockResolvedValue(1),
+      nth: jest.fn(() => hiddenTarget),
+    };
+
+    await (service as any).fillFirstVisible(
+      {},
+      'title',
+      [{ name: 'hidden title textarea', locator: hiddenLocator }],
+      'Article title'
+    );
+
+    expect(hiddenTarget.fill).toHaveBeenCalledWith('Article title', { force: true });
+    expect(hiddenTarget.dispatchEvent).toHaveBeenCalledWith('change');
+    expect(hiddenTarget.dispatchEvent).toHaveBeenCalledWith('blur');
+  });
+
+  it('removes leading frontmatter before rendering article content', () => {
+    const service = new PlaywrightService({
+      appendLine: jest.fn(),
+      show: jest.fn(),
+      dispose: jest.fn(),
+      name: 'test',
+    } as any);
+
+    const markdown = [
+      '---',
+      'title: Test article',
+      'tags: [test]',
+      '---',
+      '',
+      '# Test article',
+      '',
+      'Article body',
+    ].join('\n');
+
+    const withoutFrontmatter = (service as any).stripLeadingFrontmatter(markdown);
+    const body = (service as any).stripLeadingTopLevelHeading(withoutFrontmatter);
+
+    expect(body).toBe('Article body');
+  });
+
   it('loads mermaid runtime through local-source eval injection', async () => {
     const service = new PlaywrightService({
       appendLine: jest.fn(),

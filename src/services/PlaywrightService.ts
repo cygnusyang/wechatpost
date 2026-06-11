@@ -332,6 +332,10 @@ export class PlaywrightService {
     return lines.join('\n');
   }
 
+  private stripLeadingFrontmatter(markdown: string): string {
+    return markdown.replace(/^\s*---\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)/, '');
+  }
+
   private async renderMermaidToPngDataUrl(diagramCode: string): Promise<string | null> {
     const context = this.context;
     if (!context) {
@@ -1225,7 +1229,11 @@ export class PlaywrightService {
     return this.authenticatedPage.evaluate((searchToken) => {
       const editors = Array.from(document.querySelectorAll('[contenteditable="true"]')) as HTMLElement[];
       const visibleEditors = editors.filter((el) => el.offsetParent !== null);
-      const editor = visibleEditors[0];
+      const editor = searchToken
+        ? visibleEditors.find((candidate) => (candidate.innerText || '').includes(searchToken))
+        : visibleEditors.sort(
+            (left, right) => (right.innerText || '').length - (left.innerText || '').length
+          )[0];
       if (!editor) {
         return { hasToken: false, imageCount: 0 };
       }
@@ -1245,7 +1253,9 @@ export class PlaywrightService {
     return this.authenticatedPage.evaluate((searchToken) => {
       const editors = Array.from(document.querySelectorAll('[contenteditable="true"]')) as HTMLElement[];
       const visibleEditors = editors.filter((el) => el.offsetParent !== null);
-      const editor = visibleEditors[0];
+      const editor = visibleEditors.find((candidate) =>
+        (candidate.innerText || '').includes(searchToken)
+      );
       if (!editor) {
         return false;
       }
@@ -1292,7 +1302,9 @@ export class PlaywrightService {
       ({ searchToken, replacement }) => {
         const editors = Array.from(document.querySelectorAll('[contenteditable="true"]')) as HTMLElement[];
         const visibleEditors = editors.filter((el) => el.offsetParent !== null);
-        const editor = visibleEditors[0];
+        const editor = visibleEditors.find((candidate) =>
+          (candidate.innerText || '').includes(searchToken)
+        );
         if (!editor) {
           return false;
         }
@@ -1343,9 +1355,11 @@ export class PlaywrightService {
         ({ searchToken, baseline }) => {
           const editors = Array.from(document.querySelectorAll('[contenteditable="true"]')) as HTMLElement[];
           const visibleEditors = editors.filter((el) => el.offsetParent !== null);
-          const editor = visibleEditors[0];
+          const editor = visibleEditors.find((candidate) =>
+            (candidate.innerText || '').includes(searchToken)
+          );
           if (!editor) {
-            return false;
+            return true;
           }
           const text = editor.innerText || '';
           const imageCount = editor.querySelectorAll('img').length;
@@ -1621,12 +1635,281 @@ export class PlaywrightService {
     try {
       const editorPage = await popupPromise;
       await editorPage.waitForLoadState('domcontentloaded', { timeout: DIALOG_TIMEOUT_MS });
-      this.log('[DEBUG] Article editor opened in a new tab after selecting "文章"');
+      const editorUrl = typeof editorPage.url === 'function' ? editorPage.url() : '';
+      const editorTitle =
+        typeof editorPage.title === 'function' ? await editorPage.title().catch(() => '') : '';
+      this.log(
+        `[DEBUG] Article editor opened in a new tab after selecting "文章": url=${editorUrl}, title="${editorTitle}"`
+      );
       return editorPage;
     } catch (error) {
       this.log(`[DEBUG] No new tab detected after selecting "文章"; using current page: ${error}`, 'warn');
       return page;
     }
+  }
+
+  private async logArticleEditorDiagnostics(page: Page): Promise<void> {
+    try {
+      const diagnostics = await page.evaluate(() => {
+        const isVisible = (element: Element): boolean => {
+          return element instanceof HTMLElement && element.offsetParent !== null;
+        };
+        const inputs = Array.from(document.querySelectorAll('input, textarea'))
+          .filter(isVisible)
+          .slice(0, 20)
+          .map((element) => {
+            const input = element as HTMLInputElement | HTMLTextAreaElement;
+            return {
+              tag: input.tagName.toLowerCase(),
+              type: input instanceof HTMLInputElement ? input.type : '',
+              placeholder: input.placeholder,
+              ariaLabel: input.getAttribute('aria-label') || '',
+              valueLength: input.value.length,
+            };
+          });
+        const editables = Array.from(document.querySelectorAll('[contenteditable="true"]'))
+          .filter(isVisible)
+          .slice(0, 20)
+          .map((element) => ({
+            tag: element.tagName.toLowerCase(),
+            className: element.getAttribute('class') || '',
+            ariaLabel: element.getAttribute('aria-label') || '',
+            text: (element.textContent || '').trim().slice(0, 120),
+          }));
+        const buttons = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+          .filter(isVisible)
+          .map((element) => ({
+            tag: element.tagName.toLowerCase(),
+            className: element.getAttribute('class') || '',
+            text: (element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+            ariaLabel: element.getAttribute('aria-label') || '',
+            disabled:
+              element instanceof HTMLButtonElement || element instanceof HTMLInputElement
+                ? element.disabled
+                : false,
+          }))
+          .slice(0, 40);
+        const aiDescription = document.querySelector(
+          'textarea[placeholder="请描述你想要创作的内容"]'
+        );
+        const aiContainer =
+          aiDescription?.closest('[role="dialog"], .weui-desktop-dialog, .dialog') ||
+          aiDescription?.parentElement?.parentElement?.parentElement;
+        const aiControls = aiContainer
+          ? Array.from(
+              aiContainer.querySelectorAll(
+                'button, a, [role="button"], [class*="btn"], [class*="button"]'
+              )
+            )
+              .filter(isVisible)
+              .map((element) => ({
+                tag: element.tagName.toLowerCase(),
+                className: element.getAttribute('class') || '',
+                text: (element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+                ariaLabel: element.getAttribute('aria-label') || '',
+              }))
+              .slice(0, 30)
+          : [];
+
+        return {
+          readyState: document.readyState,
+          inputs,
+          editables,
+          buttons,
+          aiControls,
+          bodyText: (document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 500),
+        };
+      });
+      this.log(
+        `[DEBUG] Article editor diagnostics: url=${page.url()}, title="${await page.title().catch(() => '')}", state=${JSON.stringify(diagnostics)}`
+      );
+    } catch (error) {
+      this.log(`[DEBUG] Failed to collect article editor diagnostics: ${error}`, 'warn');
+    }
+  }
+
+  private async fillFirstVisible(
+    page: Page,
+    fieldName: string,
+    candidates: Array<{ name: string; locator: Locator }>,
+    value: string
+  ): Promise<void> {
+    let lastError: unknown;
+    for (const candidate of candidates) {
+      const count = await candidate.locator.count().catch(() => 0);
+      if (count === 0) {
+        continue;
+      }
+
+      for (let index = 0; index < count; index += 1) {
+        const target = candidate.locator.nth(index);
+        const visible = await target.isVisible().catch(() => false);
+        if (!visible) {
+          continue;
+        }
+
+        try {
+          await target.click();
+          await target.fill(value);
+          this.log(`[DEBUG] ${fieldName} filled via ${candidate.name} [${index}]`);
+          return;
+        } catch (error) {
+          lastError = error;
+          this.log(
+            `[DEBUG] ${fieldName} candidate ${candidate.name} [${index}] failed: ${error}`,
+            'warn'
+          );
+        }
+      }
+
+      for (let index = 0; index < count; index += 1) {
+        const target = candidate.locator.nth(index);
+        try {
+          await target.fill(value, { force: true });
+          await target.dispatchEvent('change');
+          await target.dispatchEvent('blur');
+          const forcedValue = await target.inputValue().catch(() => '');
+          if (forcedValue === value) {
+            this.log(
+              `[DEBUG] ${fieldName} filled via forced input ${candidate.name} [${index}]`
+            );
+            return;
+          }
+        } catch (error) {
+          lastError = error;
+          this.log(
+            `[DEBUG] ${fieldName} forced input ${candidate.name} [${index}] failed: ${error}`,
+            'warn'
+          );
+        }
+
+        try {
+          const filled = await target.evaluate((element, nextValue) => {
+            if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
+              return false;
+            }
+
+            const prototype =
+              element instanceof HTMLTextAreaElement
+                ? HTMLTextAreaElement.prototype
+                : HTMLInputElement.prototype;
+            const valueSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+            if (!valueSetter) {
+              return false;
+            }
+
+            valueSetter.call(element, nextValue);
+            element.dispatchEvent(
+              new InputEvent('input', {
+                bubbles: true,
+                inputType: 'insertText',
+                data: nextValue,
+              })
+            );
+            element.dispatchEvent(new Event('change', { bubbles: true }));
+            element.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+            return element.value === nextValue;
+          }, value);
+
+          if (filled) {
+            this.log(`[DEBUG] ${fieldName} filled via DOM fallback ${candidate.name} [${index}]`);
+            return;
+          }
+        } catch (error) {
+          lastError = error;
+          this.log(
+            `[DEBUG] ${fieldName} DOM fallback ${candidate.name} [${index}] failed: ${error}`,
+            'warn'
+          );
+        }
+      }
+    }
+
+    await this.logArticleEditorDiagnostics(page);
+    throw new Error(`Unable to locate visible ${fieldName} field. Last error: ${lastError}`);
+  }
+
+  private async fillWechatTitle(page: Page, title: string): Promise<void> {
+    const titleEditor = page.locator('.ProseMirror[contenteditable="true"]:visible').first();
+    await titleEditor.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+
+    try {
+      await titleEditor.click();
+      await page.keyboard.press('ControlOrMeta+A');
+      await page.keyboard.press('Backspace');
+      await titleEditor.pressSequentially(title, { delay: 20 });
+      await page.keyboard.press('Tab');
+    } catch (error) {
+      await this.logArticleEditorDiagnostics(page);
+      throw new Error(`Could not type into the WeChat title field: ${error}`);
+    }
+
+    await this.verifyWechatTitleInput(page, title);
+
+    try {
+      await page.getByText(title, { exact: true }).first().waitFor({
+        state: 'visible',
+        timeout: DIALOG_TIMEOUT_MS,
+      });
+      const counter = page.getByText(/^[1-9]\d*\/64$/).first();
+      await counter.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+      const counterText = (await counter.textContent())?.trim() || '';
+      this.log(`[DEBUG] Visible title counter: ${counterText}`);
+    } catch (error) {
+      await this.logArticleEditorDiagnostics(page);
+      throw new Error(`Title was not committed to the WeChat editor: ${error}`);
+    }
+
+    await page
+      .locator('[contenteditable="true"]')
+      .filter({ hasText: '从这里开始写正文' })
+      .last()
+      .waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
+    this.log('[DEBUG] Title committed with a visible non-zero /64 counter');
+  }
+
+  private async verifyWechatTitleInput(page: Page, title: string): Promise<void> {
+    const titleEditor = page.locator('.ProseMirror[contenteditable="true"]:visible').first();
+    const actualTitle = ((await titleEditor.textContent().catch(() => '')) || '').trim();
+    if (actualTitle !== title) {
+      await this.logArticleEditorDiagnostics(page);
+      throw new Error(
+        `WeChat title field verification failed. Expected "${title}", got "${actualTitle}".`
+      );
+    }
+    this.log(`[DEBUG] Verified visible WeChat title editor value: "${actualTitle}"`);
+  }
+
+  private async clickFirstVisible(
+    page: Page,
+    actionName: string,
+    candidates: Array<{ name: string; locator: Locator }>
+  ): Promise<void> {
+    let lastError: unknown;
+    for (const candidate of candidates) {
+      const count = await candidate.locator.count().catch(() => 0);
+      for (let index = 0; index < count; index += 1) {
+        const target = candidate.locator.nth(index);
+        if (!(await target.isVisible().catch(() => false))) {
+          continue;
+        }
+
+        try {
+          await target.click({ timeout: DIALOG_TIMEOUT_MS });
+          this.log(`[DEBUG] ${actionName} clicked via ${candidate.name} [${index}]`);
+          return;
+        } catch (error) {
+          lastError = error;
+          this.log(
+            `[DEBUG] ${actionName} candidate ${candidate.name} [${index}] failed: ${error}`,
+            'warn'
+          );
+        }
+      }
+    }
+
+    await this.logArticleEditorDiagnostics(page);
+    throw new Error(`Unable to click ${actionName}. Last error: ${lastError}`);
   }
 
   private async clickAiCoverEntry(timeoutMs: number = DIALOG_TIMEOUT_MS): Promise<void> {
@@ -2059,24 +2342,40 @@ export class PlaywrightService {
 
       // Step 7: Fill title (following test.py logic)
       this.log('[DEBUG] Step 7: Filling title');
-      const titleSelector = this.authenticatedPage.getByRole('textbox', { name: '请在这里输入标题' });
-      await titleSelector.waitFor({ timeout: 60000 });
-      await titleSelector.click();
-      await titleSelector.fill(title);
+      await this.fillWechatTitle(this.authenticatedPage, title);
       this.log(`[DEBUG] Title filled: "${title}"`);
 
       // Step 8: Fill author (following test.py logic)
       this.log('[DEBUG] Step 8: Filling author');
-      const authorSelector = this.authenticatedPage.getByRole('textbox', { name: '请输入作者' });
-      await authorSelector.waitFor({ timeout: 60000 });
-      await authorSelector.click();
-      await authorSelector.fill(author);
+      await this.fillFirstVisible(
+        this.authenticatedPage,
+        'author',
+        [
+          {
+            name: 'role[textbox, 请输入作者]',
+            locator: this.authenticatedPage.getByRole('textbox', { name: '请输入作者' }),
+          },
+          {
+            name: 'placeholder[请输入作者]',
+            locator: this.authenticatedPage.getByPlaceholder('请输入作者'),
+          },
+          {
+            name: 'input[name=author]',
+            locator: this.authenticatedPage.locator('input[name="author"]'),
+          },
+        ],
+        author
+      );
       this.log(`[DEBUG] Author filled: "${author}"`);
 
       // Step 9: Fill content (following test.py logic)
       this.log('[DEBUG] Step 9: Filling formatted content from markdown');
-      const bodyContent = this.stripLeadingTopLevelHeading(content);
-      if (bodyContent !== content) {
+      const withoutFrontmatter = this.stripLeadingFrontmatter(content);
+      const bodyContent = this.stripLeadingTopLevelHeading(withoutFrontmatter);
+      if (withoutFrontmatter !== content) {
+        this.log('[DEBUG] Removed leading frontmatter from body markdown before upload');
+      }
+      if (bodyContent !== withoutFrontmatter) {
         this.log('[DEBUG] Removed leading H1 from body markdown before upload');
       }
       await this.fillBodyWithFormattedMarkdown(bodyContent, contentStyle);
@@ -2092,13 +2391,14 @@ export class PlaywrightService {
       // Step 10: Fill digest if provided (following test.py logic)
       if (digest) {
         this.log('[DEBUG] Step 10: Filling digest');
+        const normalizedDigest = this.toWechatPlainText(bodyContent).slice(0, digest.length);
         const digestSelector = this.authenticatedPage.getByRole('textbox', {
           name: '选填，不填写则默认抓取正文开头部分文字，摘要会在转发卡片和公众号会话展示。'
         });
         await digestSelector.waitFor({ timeout: 60000 });
         await digestSelector.click();
-        await digestSelector.fill(digest);
-        this.log(`[DEBUG] Digest filled: "${digest}"`);
+        await digestSelector.fill(normalizedDigest);
+        this.log(`[DEBUG] Digest filled: "${normalizedDigest}"`);
       }
 
       // Step 11: Set cover image (following test.py logic - click twice)
@@ -2125,7 +2425,36 @@ export class PlaywrightService {
 
       // Step 14: Click start creation (following test.py logic)
       this.log('[DEBUG] Step 14: Clicking "开始创作"');
-      await this.authenticatedPage.getByRole('button', { name: '开始创作' }).click();
+      await this.clickFirstVisible(
+        this.authenticatedPage,
+        'AI cover creation',
+        [
+          {
+            name: 'button[开始创作]',
+            locator: this.authenticatedPage.getByRole('button', { name: '开始创作', exact: true }),
+          },
+          {
+            name: 'text[开始创作]',
+            locator: this.authenticatedPage.getByText('开始创作', { exact: true }),
+          },
+          {
+            name: 'button[开始生成]',
+            locator: this.authenticatedPage.getByRole('button', { name: '开始生成', exact: true }),
+          },
+          {
+            name: 'button[立即生成]',
+            locator: this.authenticatedPage.getByRole('button', { name: '立即生成', exact: true }),
+          },
+          {
+            name: 'button[生成图片]',
+            locator: this.authenticatedPage.getByRole('button', { name: '生成图片', exact: true }),
+          },
+          {
+            name: 'button.send-btn',
+            locator: this.authenticatedPage.locator('button.send-btn'),
+          },
+        ]
+      );
       await this.authenticatedPage.locator('.ai-image-item-wrp:visible').first().waitFor({ timeout: 60000 });
 
       // Step 15: Select image (following test.py logic)
@@ -2327,6 +2656,7 @@ export class PlaywrightService {
         vscode.window.showInformationMessage('Article published successfully in Chrome');
       } else {
         this.log('[DEBUG] Step 21: Saving as draft');
+        await this.verifyWechatTitleInput(this.authenticatedPage, title);
         const saveButton = this.authenticatedPage.getByRole('button', { name: '保存为草稿' });
         await saveButton.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
         await saveButton.hover();
