@@ -1,5 +1,12 @@
 # Change Log
 
+## 1.3.6 (2026-07-06)
+
+- 🐛 **Fix**: Render inline `<svg>` and `<figure><svg>...</svg></figure>` blocks as PNG images so SVG diagrams appear in WeChat article content.
+- 🐛 **Fix**: Avoid leaving internal `MP_INLINE_SVG_UPLOAD_TOKEN_*` placeholders in the editor when image upload automation stalls.
+- 🔧 **Improve**: Render Mermaid and inline SVG diagrams directly as bounded inline PNG data URLs for editor insertion, with size checks and code-block fallback for oversized images.
+- 🧪 **Test**: Add coverage for inline SVG preview rendering, editor HTML rendering, and oversized diagram fallback.
+
 ## 1.3.3 (2026-05-04)
 
 - 🔧 **Fix**: GitHub Actions release workflow - fix VSIX filename matching in release upload

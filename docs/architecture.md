@@ -2,11 +2,12 @@
 
 ## 项目概述
 
-WeChatPost 是一个 Visual Studio Code 扩展，用于将 Markdown 文件一键发布到微信公众号。它支持 Mermaid 图表自动渲染上传，并采用 Chrome CDP（Chrome DevTools Protocol）实现全自动登录和发布流程。
+WeChatPost 是一个 Visual Studio Code 扩展，用于将 Markdown 文件一键发布到微信公众号。它支持 Mermaid 图表和内嵌 SVG 自动渲染为 PNG，并采用 Playwright 实现浏览器自动登录和发布流程。
 
 ### 核心功能
 - ✅ 完整支持 Markdown / GFM（GitHub Flavored Markdown）
-- ✅ 支持 Mermaid 图表自动渲染上传
+- ✅ 支持 Mermaid 图表自动渲染为 PNG
+- ✅ 支持内嵌 SVG / `<figure><svg>...</svg></figure>` 自动渲染为 PNG
 - ✅ 代码高亮（highlight.js）
 - ✅ 默认微信样式主题
 - ✅ 手机扫码登录（不需要开发者资质/AppID）
@@ -28,9 +29,7 @@ graph TB
     end
     
     subgraph "服务层"
-        C --> F[WeChatService]
-        C --> G[ChromeCDPService]
-        C --> H[PreviewService]
+        C --> F[PlaywrightService]
         C --> I[SettingsService]
     end
     
@@ -45,8 +44,7 @@ graph TB
         M --> O[Toolbar Component]
     end
     
-    F --> P[WeChat API]
-    G --> Q[Chrome Browser]
+    F --> Q[Chrome Browser]
     
     style A fill:#e1f5fe
     style C fill:#f3e5f5
@@ -61,40 +59,23 @@ graph TB
 - **关键功能**:
   - 注册三个主要命令：`wechatpost.preview`, `wechatpost.uploadToWeChat`, `wechatpost.logoutWeChat`
   - 初始化所有服务实例
-  - 处理 CDP 全自动上传流程
+  - 处理 Playwright 自动上传流程
   - 管理认证状态
 
 #### 2. 服务层 (Services)
 
-##### 2.1 WeChatService (`src/services/WeChatService.ts`)
-- **职责**: 处理与微信公众号 API 的所有交互
+##### 2.1 PlaywrightService (`src/services/PlaywrightService.ts`)
+- **职责**: 通过 Playwright 控制浏览器完成微信公众号登录、草稿创建和正文填充
 - **关键功能**:
-  - 认证管理（保存/加载 Cookie）
-  - 图片上传到微信 CDN
-  - 创建文章草稿
-  - 验证用户身份
-- **接口定义**:
-  ```typescript
-  interface IWeChatService {
-    checkAuth(): Promise<{ isAuthenticated: boolean; authInfo?: WeChatAuthInfo }>;
-    checkAuthWithCookies(cookies: CookieParam[]): Promise<{ isAuthenticated: boolean; authInfo?: WeChatAuthInfo }>;
-    uploadImage(buffer: Buffer, filename: string): Promise<WeChatUploadResult>;
-    createDraft(title: string, author: string, content: string): Promise<WeChatDraftResult>;
-  }
-  ```
-
-##### 2.2 ChromeCDPService (`src/services/ChromeCDPService.ts`)
-- **职责**: 通过 Puppeteer 控制 Chrome 浏览器实现自动化
-- **关键功能**:
-  - 首次登录流程（显示二维码）
-  - 已认证会话管理
-  - Cookie 提取和注入
-  - 自动发布草稿
+  - 持久化浏览器会话，复用微信公众号登录状态
+  - 渲染 Markdown 为微信公众号兼容 HTML
+  - 将 Mermaid 和内嵌 SVG 渲染为 PNG
+  - 自动创建和填充文章草稿
 - **工作流程**:
   ```mermaid
   sequenceDiagram
     participant U as 用户
-    participant C as ChromeCDPService
+    participant C as PlaywrightService
     participant B as Chrome浏览器
     participant W as WeChat网页
     
@@ -104,25 +85,17 @@ graph TB
     W-->>U: 显示二维码
     U->>W: 手机扫码登录
     C->>W: 检测登录状态
-    W-->>C: 返回Cookie
-    C->>C: 保存认证信息
+    W-->>C: 会话保持在持久化浏览器上下文
     C->>W: 自动创建草稿
     W-->>C: 返回草稿链接
     C-->>U: 显示成功消息
   ```
 
-##### 2.3 PreviewService (`src/services/PreviewService.ts`)
-- **职责**: 管理 Markdown 预览 Webview
-- **关键功能**:
-  - 创建和显示预览面板
-  - 与 Webview 通信
-  - 更新认证状态显示
-
-##### 2.4 SettingsService (`src/services/SettingsService.ts`)
+##### 2.2 SettingsService (`src/services/SettingsService.ts`)
 - **职责**: 管理扩展配置
 - **关键功能**:
   - 读取/写入 VSCode 配置
-  - 管理默认作者名等设置
+  - 管理默认作者名、原创声明、赞赏、合集和内容样式等设置
 
 #### 3. 工具层 (Utils)
 
@@ -130,28 +103,27 @@ graph TB
 - **职责**: 处理 Markdown 转换为微信兼容的 HTML
 - **关键功能**:
   - 使用 unified 处理 Markdown
-  - 渲染 Mermaid 图表为图片
+  - 渲染 Mermaid 图表和内嵌 SVG 为 PNG 图片
   - 处理代码高亮
 - **处理流程**:
   ```mermaid
   graph LR
-    A[原始Markdown] --> B{检测Mermaid图表}
-    B -->|有图表| C[渲染为图片]
+    A[原始Markdown] --> B{检测Mermaid/SVG图表}
+    B -->|有图表| C[渲染为PNG图片]
     B -->|无图表| D[直接处理]
-    C --> E[上传到微信CDN]
-    E --> F[替换为img标签]
+    C --> F[替换为img标签]
     D --> G[Markdown转HTML]
     F --> G
     G --> H[代码高亮]
     H --> I[最终HTML]
   ```
 
-##### 3.2 mermaidRenderer (`src/utils/mermaidRenderer.ts`)
-- **职责**: 将 Mermaid 代码渲染为图片
+##### 3.2 图表渲染
+- **职责**: 将 Mermaid 代码和内嵌 SVG 渲染为 PNG 图片
 - **关键功能**:
-  - 使用 jsdom 和 canvas 渲染图表
-  - 支持多种图表类型
-  - 生成 PNG 格式图片
+  - 使用 Playwright/Chromium 渲染图表
+  - 支持 Mermaid、原始 `<svg>` 和 `<figure><svg>...</svg></figure>` 结构
+  - 生成微信公众号编辑器兼容的 PNG 图片
 
 ##### 3.3 extractTitle (`src/utils/extractTitle.ts`)
 - **职责**: 从 Markdown 中提取文章标题
@@ -201,21 +173,20 @@ graph TD
     A[用户打开.md文件] --> B[执行上传命令]
     B --> C[extension.ts处理命令]
     C --> D[提取标题和内容]
-    D --> E[processMarkdown处理]
-    E --> F{有Mermaid图表?}
-    F -->|是| G[渲染图表为图片]
-    G --> H[上传图片到微信CDN]
-    H --> I[替换为img标签]
+    D --> E[PlaywrightService渲染正文]
+    E --> F{有Mermaid/SVG图表?}
+    F -->|是| G[渲染为PNG]
+    G --> I[替换为img标签]
     F -->|否| J[直接转换HTML]
     I --> J
     J --> K[获取或创建认证会话]
     K --> L{已认证?}
-    L -->|否| M[ChromeCDP登录流程]
+    L -->|否| M[Playwright扫码登录流程]
     M --> N[保存认证信息]
     L -->|是| O[使用现有会话]
     N --> O
-    O --> P[创建微信草稿]
-    P --> Q[返回草稿链接]
+    O --> P[创建并填充微信草稿]
+    P --> Q[返回编辑器页面]
     Q --> R[打开浏览器显示结果]
 ```
 
@@ -289,14 +260,14 @@ stateDiagram-v2
 ## 错误处理
 
 ### 错误分类
-1. **网络错误**: 微信 API 调用失败、CDP 连接失败
+1. **网络错误**: 微信网页访问失败、Playwright 浏览器连接失败
 2. **认证错误**: Cookie 失效、登录失败
 3. **处理错误**: Markdown 处理失败、图片渲染失败
 4. **用户错误**: 无活动编辑器、文件格式错误
 
 ### 错误处理策略
 - **重试机制**: 网络错误自动重试
-- **降级方案**: Mermaid 渲染失败时保留原始代码块
+- **降级方案**: Mermaid 或 SVG 渲染失败时保留原始代码块
 - **用户反馈**: 通过 VSCode 通知和输出通道提供详细错误信息
 - **日志记录**: 详细的日志记录到输出通道
 
@@ -305,7 +276,7 @@ stateDiagram-v2
 ### 优化措施
 1. **Chrome 会话复用**: 保持浏览器会话避免重复启动
 2. **图片缓存**: 已上传图片不再重复上传
-3. **增量处理**: 仅处理变化的 Mermaid 图表
+3. **尺寸限制**: 对生成的 PNG 进行大小检查，超限时降级为代码块
 4. **异步操作**: 所有耗时操作都使用异步处理
 
 ### 资源管理
@@ -316,7 +287,7 @@ stateDiagram-v2
 ## 扩展性设计
 
 ### 插件系统
-当前已支持 Mermaid 图表插件，架构设计允许轻松添加新的 Markdown 处理器插件。
+当前已支持 Mermaid 图表和内嵌 SVG 渲染，架构设计允许继续添加新的 Markdown 处理器插件。
 
 ### 服务接口
 基于接口的设计使得可以替换不同的微信服务实现（如测试 Mock 实现）。
@@ -332,7 +303,7 @@ stateDiagram-v2
 - 接口契约测试
 
 ### 集成测试
-- Chrome CDP 集成测试（使用 Playwright）
+- Playwright 浏览器自动化集成测试
 - 微信 API 集成测试（Mock 实现）
 
 ### 端到端测试

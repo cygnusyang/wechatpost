@@ -450,7 +450,7 @@ describe('PlaywrightService', () => {
     expect(html).toContain('graph TD');
   });
 
-  it('builds upload plan with token placeholders for mermaid images', async () => {
+  it('renders mermaid images inline for editor content', async () => {
     const service = new PlaywrightService({
       appendLine: jest.fn(),
       show: jest.fn(),
@@ -466,10 +466,74 @@ describe('PlaywrightService', () => {
       contentStyle
     );
 
-    expect(result.tasks).toHaveLength(1);
-    expect(result.tasks[0].filePath).toBe('/tmp/mermaid-test.png');
-    expect(result.tasks[0].token).toContain('MP_MERMAID_UPLOAD_TOKEN_0_');
-    expect(result.html).toContain(result.tasks[0].token);
+    expect(result.tasks).toHaveLength(0);
+    expect(result.html).toContain('data:image/png;base64,AAAA');
+    expect(result.html).not.toContain('MP_MERMAID_UPLOAD_TOKEN_0_');
     expect(result.html).not.toContain('MP_MERMAID_PLACEHOLDER_0');
+  });
+
+  it('renders inline figure svg as a preview image', async () => {
+    const service = new PlaywrightService({
+      appendLine: jest.fn(),
+      show: jest.fn(),
+      dispose: jest.fn(),
+      name: 'test',
+    } as any);
+
+    jest
+      .spyOn(service as any, 'renderSvgMarkupToPngDataUrl')
+      .mockResolvedValue('data:image/png;base64,SVGPNG');
+
+    const html = await (service as any).renderMarkdownToWechatHtml(
+      '<figure><svg viewBox="0 0 10 10"><rect width="10" height="10" /></svg></figure>',
+      contentStyle
+    );
+
+    expect(html).toContain('data:image/png;base64,SVGPNG');
+    expect(html).not.toContain('MP_INLINE_SVG_PLACEHOLDER_0');
+    expect(html).not.toContain('<svg');
+  });
+
+  it('renders inline svg images inline for editor content', async () => {
+    const service = new PlaywrightService({
+      appendLine: jest.fn(),
+      show: jest.fn(),
+      dispose: jest.fn(),
+      name: 'test',
+    } as any);
+
+    jest.spyOn(service as any, 'renderSvgMarkupToPngDataUrl').mockResolvedValue('data:image/png;base64,SVGPNG');
+    jest.spyOn(service as any, 'writeDataUrlToTempPng').mockResolvedValue('/tmp/svg-test.png');
+
+    const result = await (service as any).renderMarkdownToWechatHtmlWithUploadPlan(
+      '<figure><svg viewBox="0 0 10 10"><rect width="10" height="10" /></svg></figure>',
+      contentStyle
+    );
+
+    expect(result.tasks).toHaveLength(0);
+    expect(result.html).toContain('data:image/png;base64,SVGPNG');
+    expect(result.html).not.toContain('MP_INLINE_SVG_UPLOAD_TOKEN_0_');
+    expect(result.html).not.toContain('MP_INLINE_SVG_PLACEHOLDER_0');
+  });
+
+  it('does not build a mermaid upload task when the rendered PNG exceeds WeChat limits', async () => {
+    const service = new PlaywrightService({
+      appendLine: jest.fn(),
+      show: jest.fn(),
+      dispose: jest.fn(),
+      name: 'test',
+    } as any);
+
+    const oversizedPngDataUrl = `data:image/png;base64,${Buffer.alloc(901 * 1024).toString('base64')}`;
+    jest.spyOn(service as any, 'renderMermaidToPngDataUrl').mockResolvedValue(oversizedPngDataUrl);
+
+    const result = await (service as any).renderMarkdownToWechatHtmlWithUploadPlan(
+      '```mermaid\ngraph TD\nA-->B\n```',
+      contentStyle
+    );
+
+    expect(result.tasks).toHaveLength(0);
+    expect(result.html).toContain('language-mermaid');
+    expect(result.html).toContain('graph TD');
   });
 });

@@ -22,13 +22,19 @@ const MERMAID_LOCAL_RUNTIME_RELATIVE_PATH = path.join('mermaid', 'dist', 'mermai
 const MERMAID_UPLOAD_WAIT_MS = 30000;
 const MERMAID_UPLOAD_INPUT_SETTLE_MS = 80;
 const MERMAID_IMAGE_LOAD_TIMEOUT_MS = 10000;
+const DEFERRED_IMAGE_UPLOAD_STEP_TIMEOUT_MS = 5000;
 const MERMAID_STANDALONE_BROWSER_ARGS = ['--disable-dev-shm-usage', '--disable-gpu'];
 const MERMAID_RENDER_EVAL_TIMEOUT_MS = 45000;
+// WeChat article inline images uploaded through the editor/uploadimg path must
+// be under 1MB. Keep margin for metadata and backend-side validation drift.
+const WECHAT_ARTICLE_IMAGE_MAX_BYTES = 900 * 1024;
 
-interface MermaidUploadTask {
+interface DeferredImageUploadTask {
   token: string;
   filePath: string;
   fallbackText: string;
+  label: string;
+  dataUrl: string;
 }
 
 export class PlaywrightService {
@@ -385,7 +391,7 @@ export class PlaywrightService {
       }
 
       const evaluatePromise = renderPage.evaluate(
-        async ({ code, imageLoadTimeoutMs, currentTraceId }) => {
+        async ({ code, imageLoadTimeoutMs, currentTraceId, maxUploadBytes }) => {
           const trace = (message: string) => {
             // eslint-disable-next-line no-console
             console.debug(`[MP_MERMAID_TRACE:${currentTraceId}] ${message}`);
@@ -509,9 +515,21 @@ export class PlaywrightService {
             trace(`intrinsic-size width=${Math.round(width)} height=${Math.round(height)}`);
 
             const maxDimension = 2000;
-            const scale = Math.min(1, maxDimension / Math.max(width, height));
-            const finalWidth = Math.max(1, Math.round(width * scale));
-            const finalHeight = Math.max(1, Math.round(height * scale));
+            const baseScale = Math.min(1, maxDimension / Math.max(width, height));
+            const candidateScales = Array.from(
+              new Set(
+                [baseScale, baseScale * 0.85, baseScale * 0.7, baseScale * 0.55, baseScale * 0.4, baseScale * 0.3]
+                  .map((value) => Number(value.toFixed(4)))
+                  .filter((value) => value > 0)
+              )
+            );
+            const estimateDataUrlBytes = (dataUrl: string): number => {
+              const prefix = 'data:image/png;base64,';
+              if (!dataUrl.startsWith(prefix)) {
+                return dataUrl.length;
+              }
+              return Math.floor(((dataUrl.length - prefix.length) * 3) / 4);
+            };
 
             const svgBlob = new Blob([result.svg as string], { type: 'image/svg+xml;charset=utf-8' });
             const svgUrl = URL.createObjectURL(svgBlob);
@@ -527,19 +545,42 @@ export class PlaywrightService {
                 const image = new Image();
                 image.onload = () => {
                   window.clearTimeout(timeoutId);
-                  const canvas = document.createElement('canvas');
-                  canvas.width = finalWidth;
-                  canvas.height = finalHeight;
-                  const ctx = canvas.getContext('2d');
-                  if (!ctx) {
-                    resolve({ pngUrl: null, reason: 'canvas-2d-context-unavailable' });
-                    return;
-                  }
-                  ctx.fillStyle = '#ffffff';
-                  ctx.fillRect(0, 0, canvas.width, canvas.height);
-                  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
                   try {
-                    resolve({ pngUrl: canvas.toDataURL('image/png'), reason: null });
+                    let smallestPngUrl: string | null = null;
+                    let smallestBytes = Number.POSITIVE_INFINITY;
+
+                    for (const candidateScale of candidateScales) {
+                      const canvas = document.createElement('canvas');
+                      canvas.width = Math.max(1, Math.round(width * candidateScale));
+                      canvas.height = Math.max(1, Math.round(height * candidateScale));
+                      const ctx = canvas.getContext('2d');
+                      if (!ctx) {
+                        resolve({ pngUrl: null, reason: 'canvas-2d-context-unavailable' });
+                        return;
+                      }
+                      ctx.fillStyle = '#ffffff';
+                      ctx.fillRect(0, 0, canvas.width, canvas.height);
+                      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+                      const pngUrl = canvas.toDataURL('image/png');
+                      const pngBytes = estimateDataUrlBytes(pngUrl);
+                      trace(
+                        `png-candidate scale=${candidateScale} width=${canvas.width} height=${canvas.height} bytes=${pngBytes}`
+                      );
+                      if (pngBytes < smallestBytes) {
+                        smallestPngUrl = pngUrl;
+                        smallestBytes = pngBytes;
+                      }
+                      if (pngBytes <= maxUploadBytes) {
+                        resolve({ pngUrl, reason: null });
+                        return;
+                      }
+                    }
+
+                    resolve({
+                      pngUrl: smallestPngUrl,
+                      reason: smallestPngUrl ? `png-too-large-after-compression: ${smallestBytes}` : null,
+                    });
                   } catch (toDataUrlError: any) {
                     const message = toDataUrlError?.message
                       ? String(toDataUrlError.message)
@@ -584,6 +625,7 @@ export class PlaywrightService {
           code: diagramCode,
           imageLoadTimeoutMs: MERMAID_IMAGE_LOAD_TIMEOUT_MS,
           currentTraceId: traceId,
+          maxUploadBytes: WECHAT_ARTICLE_IMAGE_MAX_BYTES,
         }
       );
 
@@ -657,8 +699,14 @@ export class PlaywrightService {
       ) {
         this.log(`[WARN] Mermaid canvas export is tainted, trying screenshot fallback (${traceId})`, 'warn');
         const fallbackDataUrl = await this.renderMermaidPngViaElementScreenshot(renderPage, diagramCode, traceId);
-        if (fallbackDataUrl) {
+        if (fallbackDataUrl && this.isWechatArticleImageDataUrlWithinLimit(fallbackDataUrl)) {
           return fallbackDataUrl;
+        }
+        if (fallbackDataUrl) {
+          this.log(
+            `[WARN] Mermaid screenshot fallback exceeded WeChat image limit (${traceId}), bytes≈${this.getPngDataUrlApproxBytes(fallbackDataUrl)}`,
+            'warn'
+          );
         }
       }
 
@@ -666,11 +714,10 @@ export class PlaywrightService {
         return null;
       }
 
-      const approxBytes = Math.floor(((pngDataUrl.length - 'data:image/png;base64,'.length) * 3) / 4);
-      const maxBytes = 2 * 1024 * 1024;
-      if (approxBytes > maxBytes) {
+      const approxBytes = this.getPngDataUrlApproxBytes(pngDataUrl);
+      if (approxBytes > WECHAT_ARTICLE_IMAGE_MAX_BYTES) {
         this.log(
-          `Mermaid diagram is too large after PNG render (${approxBytes} bytes), fallback to code block (${traceId})`,
+          `Mermaid diagram is too large for WeChat after PNG render (${approxBytes} bytes), fallback to code block (${traceId})`,
           'warn'
         );
         return null;
@@ -702,6 +749,199 @@ export class PlaywrightService {
       } else if (renderPage && !renderPage.isClosed()) {
         await renderPage.close().catch((closeError) => {
           this.log(`Failed to close Mermaid render page: ${closeError}`, 'warn');
+        });
+      }
+    }
+  }
+
+  private extractInlineSvgBlocks(markdown: string): { markdown: string; blocks: string[] } {
+    const blocks: string[] = [];
+    const svgBlockPattern = /<figure\b[\s\S]*?<svg\b[\s\S]*?<\/svg>[\s\S]*?<\/figure>|<svg\b[\s\S]*?<\/svg>/gi;
+    const replacedMarkdown = markdown.replace(svgBlockPattern, (match, offset: number) => {
+      if (this.isInsideFencedCode(markdown, offset)) {
+        return match;
+      }
+
+      const token = `MP_INLINE_SVG_PLACEHOLDER_${blocks.length}`;
+      blocks.push(match);
+      return token;
+    });
+
+    return { markdown: replacedMarkdown, blocks };
+  }
+
+  private isInsideFencedCode(markdown: string, offset: number): boolean {
+    const before = markdown.slice(0, offset);
+    const fenceMatches = before.match(/^(?:```|~~~)/gm);
+    return ((fenceMatches?.length ?? 0) % 2) === 1;
+  }
+
+  private async renderSvgMarkupToPngDataUrl(svgMarkup: string): Promise<string | null> {
+    let renderBrowser: Browser | null = null;
+    let renderPage: Page | null = null;
+
+    try {
+      renderBrowser = await chromium.launch({
+        headless: true,
+        args: MERMAID_STANDALONE_BROWSER_ARGS,
+      });
+      const renderContext = await renderBrowser.newContext();
+      renderPage = await renderContext.newPage();
+      await renderPage.goto('about:blank', { waitUntil: 'domcontentloaded' });
+
+      const result = await renderPage.evaluate(
+        async ({ markup, imageLoadTimeoutMs, maxUploadBytes }) => {
+          const parseDimension = (value: string | null): number | null => {
+            if (!value) {
+              return null;
+            }
+            const normalized = value.trim().toLowerCase();
+            if (!normalized || normalized.endsWith('%')) {
+              return null;
+            }
+            const match = normalized.match(/^([0-9]+(?:\.[0-9]+)?)(px)?$/);
+            if (!match) {
+              return null;
+            }
+            const parsed = Number.parseFloat(match[1]);
+            return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+          };
+
+          const estimateDataUrlBytes = (dataUrl: string): number => {
+            const prefix = 'data:image/png;base64,';
+            if (!dataUrl.startsWith(prefix)) {
+              return dataUrl.length;
+            }
+            return Math.floor(((dataUrl.length - prefix.length) * 3) / 4);
+          };
+
+          const host = document.createElement('div');
+          host.innerHTML = markup;
+          const svgEl = host.querySelector('svg');
+          if (!svgEl) {
+            return { dataUrl: null, error: 'inline SVG block is missing <svg>' };
+          }
+
+          svgEl.querySelectorAll('script').forEach((script) => script.remove());
+
+          const viewBox = svgEl.getAttribute('viewBox');
+          let width: number | null = null;
+          let height: number | null = null;
+          if (viewBox) {
+            const parts = viewBox
+              .trim()
+              .split(/\s+/)
+              .map((item) => Number.parseFloat(item));
+            if (parts.length === 4 && Number.isFinite(parts[2]) && Number.isFinite(parts[3])) {
+              width = parts[2] > 0 ? parts[2] : null;
+              height = parts[3] > 0 ? parts[3] : null;
+            }
+          }
+
+          width = width ?? parseDimension(svgEl.getAttribute('width')) ?? 1200;
+          height = height ?? parseDimension(svgEl.getAttribute('height')) ?? 675;
+
+          if (!svgEl.getAttribute('xmlns')) {
+            svgEl.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+          }
+          svgEl.setAttribute('width', `${Math.ceil(width)}`);
+          svgEl.setAttribute('height', `${Math.ceil(height)}`);
+
+          const maxDimension = 2000;
+          const baseScale = Math.min(1, maxDimension / Math.max(width, height));
+          const candidateScales = Array.from(
+            new Set(
+              [baseScale, baseScale * 0.85, baseScale * 0.7, baseScale * 0.55, baseScale * 0.4, baseScale * 0.3]
+                .map((value) => Number(value.toFixed(4)))
+                .filter((value) => value > 0)
+            )
+          );
+
+          const serializedSvg = svgEl.outerHTML;
+          const svgBlob = new Blob([serializedSvg], { type: 'image/svg+xml;charset=utf-8' });
+          const svgUrl = URL.createObjectURL(svgBlob);
+
+          try {
+            return await new Promise<{ dataUrl: string | null; error: string | null }>((resolve) => {
+              const timeoutId = window.setTimeout(() => {
+                resolve({ dataUrl: null, error: 'image-load-timeout' });
+              }, imageLoadTimeoutMs);
+              const image = new Image();
+              image.onload = () => {
+                window.clearTimeout(timeoutId);
+                try {
+                  let smallestPngUrl: string | null = null;
+                  let smallestBytes = Number.POSITIVE_INFINITY;
+
+                  for (const candidateScale of candidateScales) {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.max(1, Math.round(width! * candidateScale));
+                    canvas.height = Math.max(1, Math.round(height! * candidateScale));
+                    const ctx = canvas.getContext('2d');
+                    if (!ctx) {
+                      resolve({ dataUrl: null, error: 'canvas-2d-context-unavailable' });
+                      return;
+                    }
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+                    const pngUrl = canvas.toDataURL('image/png');
+                    const pngBytes = estimateDataUrlBytes(pngUrl);
+                    if (pngBytes < smallestBytes) {
+                      smallestPngUrl = pngUrl;
+                      smallestBytes = pngBytes;
+                    }
+                    if (pngBytes <= maxUploadBytes) {
+                      resolve({ dataUrl: pngUrl, error: null });
+                      return;
+                    }
+                  }
+
+                  resolve({
+                    dataUrl: smallestPngUrl,
+                    error: smallestPngUrl ? `png-too-large-after-compression: ${smallestBytes}` : null,
+                  });
+                } catch (error: any) {
+                  resolve({ dataUrl: null, error: error?.message ? String(error.message) : String(error) });
+                }
+              };
+              image.onerror = () => {
+                window.clearTimeout(timeoutId);
+                resolve({ dataUrl: null, error: 'image-load-error' });
+              };
+              image.src = svgUrl;
+            });
+          } finally {
+            URL.revokeObjectURL(svgUrl);
+          }
+        },
+        {
+          markup: svgMarkup,
+          imageLoadTimeoutMs: MERMAID_IMAGE_LOAD_TIMEOUT_MS,
+          maxUploadBytes: WECHAT_ARTICLE_IMAGE_MAX_BYTES,
+        }
+      );
+
+      if (result.error) {
+        this.log(`Inline SVG render returned detail: ${result.error}`, 'warn');
+      }
+      if (!result.dataUrl || !this.isWechatArticleImageDataUrlWithinLimit(result.dataUrl)) {
+        return null;
+      }
+
+      return result.dataUrl;
+    } catch (error) {
+      this.log(`Failed to render inline SVG block: ${error}`, 'warn');
+      return null;
+    } finally {
+      if (renderBrowser) {
+        await renderBrowser.close().catch((closeError) => {
+          this.log(`Failed to close inline SVG render browser: ${closeError}`, 'warn');
+        });
+      } else if (renderPage && !renderPage.isClosed()) {
+        await renderPage.close().catch((closeError) => {
+          this.log(`Failed to close inline SVG render page: ${closeError}`, 'warn');
         });
       }
     }
@@ -857,9 +1097,16 @@ export class PlaywrightService {
       }
       const base64 = dataUrl.slice(prefix.length);
       const buffer = Buffer.from(base64, 'base64');
+      if (buffer.length > WECHAT_ARTICLE_IMAGE_MAX_BYTES) {
+        this.log(
+          `PNG temp file is too large for WeChat (${buffer.length} bytes), skip upload`,
+          'warn'
+        );
+        return null;
+      }
       const filePath = path.join(
         os.tmpdir(),
-        `wechatpost-mermaid-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}.png`
+        `wechatpost-image-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}.png`
       );
       fs.writeFileSync(filePath, buffer);
       return filePath;
@@ -867,6 +1114,18 @@ export class PlaywrightService {
       this.log(`Failed to write Mermaid PNG temp file: ${error}`, 'warn');
       return null;
     }
+  }
+
+  private getPngDataUrlApproxBytes(dataUrl: string): number {
+    const prefix = 'data:image/png;base64,';
+    if (!dataUrl.startsWith(prefix)) {
+      return dataUrl.length;
+    }
+    return Math.floor(((dataUrl.length - prefix.length) * 3) / 4);
+  }
+
+  private isWechatArticleImageDataUrlWithinLimit(dataUrl: string): boolean {
+    return this.getPngDataUrlApproxBytes(dataUrl) <= WECHAT_ARTICLE_IMAGE_MAX_BYTES;
   }
 
   private summarizeMermaidCodeForLog(diagramCode: string): string {
@@ -1110,8 +1369,9 @@ export class PlaywrightService {
       mermaidBlocks.push(mermaidCode.trim());
       return token;
     });
+    const svgExtraction = this.extractInlineSvgBlocks(markdownWithPlaceholders);
 
-    let html = this.markdownParser.render(markdownWithPlaceholders);
+    let html = this.markdownParser.render(svgExtraction.markdown);
 
     // 处理 LaTeX 公式
     html = this.processLatex(html);
@@ -1134,6 +1394,18 @@ export class PlaywrightService {
       html = html.replace(pPattern, mermaidHtml).replace(tokenPattern, mermaidHtml);
 
       this.log(`[DEBUG] Mermaid diagram ${i + 1} ${dataUrl ? 'rendered' : 'fallback to code block'}`);
+    }
+
+    for (let i = 0; i < svgExtraction.blocks.length; i += 1) {
+      const token = `MP_INLINE_SVG_PLACEHOLDER_${i}`;
+      const dataUrl = await this.renderSvgMarkupToPngDataUrl(svgExtraction.blocks[i]);
+      const svgHtml = dataUrl
+        ? `<p><img src="${dataUrl}" alt="Inline SVG ${i + 1}" style="max-width: 100%;" /></p>`
+        : `<pre><code>${this.markdownParser.utils.escapeHtml(svgExtraction.blocks[i])}</code></pre>`;
+
+      const pPattern = new RegExp(`<p>${token}</p>`, 'g');
+      const tokenPattern = new RegExp(token, 'g');
+      html = html.replace(pPattern, svgHtml).replace(tokenPattern, svgHtml);
     }
 
     // 处理外部链接（只保留微信域名链接）
@@ -1164,16 +1436,17 @@ export class PlaywrightService {
   private async renderMarkdownToWechatHtmlWithUploadPlan(
     markdown: string,
     style: ContentStyleSettings
-  ): Promise<{ html: string; tasks: MermaidUploadTask[] }> {
+  ): Promise<{ html: string; tasks: DeferredImageUploadTask[] }> {
     const mermaidBlocks: string[] = [];
     const markdownWithPlaceholders = markdown.replace(/```mermaid\s*([\s\S]*?)```/g, (_match, mermaidCode: string) => {
       const token = `MP_MERMAID_PLACEHOLDER_${mermaidBlocks.length}`;
       mermaidBlocks.push(mermaidCode.trim());
       return token;
     });
+    const svgExtraction = this.extractInlineSvgBlocks(markdownWithPlaceholders);
 
-    let html = this.markdownParser.render(markdownWithPlaceholders);
-    const tasks: MermaidUploadTask[] = [];
+    let html = this.markdownParser.render(svgExtraction.markdown);
+    const tasks: DeferredImageUploadTask[] = [];
 
     for (let i = 0; i < mermaidBlocks.length; i += 1) {
       const token = `MP_MERMAID_PLACEHOLDER_${i}`;
@@ -1183,22 +1456,33 @@ export class PlaywrightService {
       const fallbackText = `<pre><code class="language-mermaid">${this.markdownParser.utils.escapeHtml(diagramCode)}</code></pre>`;
 
       let replacement = fallbackText;
-      if (dataUrl) {
-        const filePath = await this.writeDataUrlToTempPng(dataUrl, i);
-        if (filePath) {
-          const uploadToken = `MP_MERMAID_UPLOAD_TOKEN_${i}_${Date.now()}`;
-          replacement = `<p>${uploadToken}</p>`;
-          tasks.push({
-            token: uploadToken,
-            filePath,
-            fallbackText: '[Mermaid 图]',
-          });
-          this.log(`[DEBUG] Mermaid diagram ${i + 1} rendered to temp file: ${filePath}`);
-        } else {
-          this.log(`[DEBUG] Mermaid diagram ${i + 1} temp file write failed, fallback to code block`, 'warn');
-        }
+      if (dataUrl && this.isWechatArticleImageDataUrlWithinLimit(dataUrl)) {
+        replacement = `<p><img src="${dataUrl}" alt="Mermaid Diagram ${i + 1}" style="max-width: 100%;" /></p>`;
+        this.log(`[DEBUG] Mermaid diagram ${i + 1} rendered as inline PNG`);
+      } else if (dataUrl) {
+        this.log(`[DEBUG] Mermaid diagram ${i + 1} inline PNG exceeds WeChat limit, fallback to code block`, 'warn');
       } else {
         this.log(`[DEBUG] Mermaid diagram ${i + 1} fallback to code block`, 'warn');
+      }
+
+      const pPattern = new RegExp(`<p>${token}</p>`, 'g');
+      const tokenPattern = new RegExp(token, 'g');
+      html = html.replace(pPattern, replacement).replace(tokenPattern, replacement);
+    }
+
+    for (let i = 0; i < svgExtraction.blocks.length; i += 1) {
+      const token = `MP_INLINE_SVG_PLACEHOLDER_${i}`;
+      const dataUrl = await this.renderSvgMarkupToPngDataUrl(svgExtraction.blocks[i]);
+      const fallbackText = '[SVG 图]';
+      let replacement = `<pre><code>${this.markdownParser.utils.escapeHtml(svgExtraction.blocks[i])}</code></pre>`;
+
+      if (dataUrl && this.isWechatArticleImageDataUrlWithinLimit(dataUrl)) {
+        replacement = `<p><img src="${dataUrl}" alt="Inline SVG ${i + 1}" style="max-width: 100%;" /></p>`;
+        this.log(`[DEBUG] Inline SVG ${i + 1} rendered as inline PNG`);
+      } else if (dataUrl) {
+        this.log(`[DEBUG] Inline SVG ${i + 1} inline PNG exceeds WeChat limit, fallback to code block`, 'warn');
+      } else {
+        this.log(`[DEBUG] Inline SVG ${i + 1} fallback to code block`, 'warn');
       }
 
       const pPattern = new RegExp(`<p>${token}</p>`, 'g');
@@ -1243,6 +1527,31 @@ export class PlaywrightService {
         imageCount: editor.querySelectorAll('img').length,
       };
     }, token);
+  }
+
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    fallback: T,
+    label: string
+  ): Promise<T> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((resolve) => {
+          timeoutHandle = setTimeout(() => {
+            this.log(`[DEBUG] ${label} timed out after ${timeoutMs}ms`, 'warn');
+            resolve(fallback);
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
   }
 
   private async focusEditorAtToken(token: string): Promise<boolean> {
@@ -1345,6 +1654,73 @@ export class PlaywrightService {
     );
   }
 
+  private async replaceTokenWithInlineImage(task: DeferredImageUploadTask): Promise<boolean> {
+    if (!this.authenticatedPage) {
+      return false;
+    }
+
+    return this.authenticatedPage.evaluate(
+      ({ searchToken, dataUrl, label }) => {
+        const editors = Array.from(document.querySelectorAll('[contenteditable="true"]')) as HTMLElement[];
+        const visibleEditors = editors.filter((el) => el.offsetParent !== null);
+        const editor = visibleEditors.find((candidate) =>
+          (candidate.innerText || '').includes(searchToken)
+        );
+        if (!editor) {
+          return false;
+        }
+
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+        let targetNode: Text | null = null;
+        let targetOffset = -1;
+
+        while (walker.nextNode()) {
+          const node = walker.currentNode as Text;
+          const offset = node.data.indexOf(searchToken);
+          if (offset >= 0) {
+            targetNode = node;
+            targetOffset = offset;
+            break;
+          }
+        }
+
+        if (!targetNode || targetOffset < 0) {
+          return false;
+        }
+
+        const range = document.createRange();
+        range.setStart(targetNode, targetOffset);
+        range.setEnd(targetNode, targetOffset + searchToken.length);
+
+        const paragraph = targetNode.parentElement?.closest('p');
+        const wrapper = document.createElement('p');
+        wrapper.style.margin = '0 0 18px';
+        wrapper.style.textAlign = 'center';
+
+        const image = document.createElement('img');
+        image.src = dataUrl;
+        image.alt = `${label} image`;
+        image.style.maxWidth = '100%';
+        image.style.height = 'auto';
+        image.style.display = 'block';
+        image.style.margin = '18px auto';
+        image.style.borderRadius = '10px';
+        wrapper.appendChild(image);
+
+        range.deleteContents();
+        range.insertNode(wrapper);
+
+        if (paragraph && (paragraph.innerText || '').trim() === '') {
+          paragraph.remove();
+        }
+
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      },
+      { searchToken: task.token, dataUrl: task.dataUrl, label: task.label }
+    );
+  }
+
   private async waitForMermaidUploadResult(token: string, baselineImageCount: number): Promise<boolean> {
     if (!this.authenticatedPage) {
       return false;
@@ -1359,7 +1735,7 @@ export class PlaywrightService {
             (candidate.innerText || '').includes(searchToken)
           );
           if (!editor) {
-            return true;
+            return false;
           }
           const text = editor.innerText || '';
           const imageCount = editor.querySelectorAll('img').length;
@@ -1388,23 +1764,51 @@ export class PlaywrightService {
 
     for (const selector of selectors) {
       const inputs = this.authenticatedPage.locator(selector);
-      const count = Math.min(await inputs.count().catch(() => 0), 10);
+      const count = Math.min(
+        await this.withTimeout(
+          inputs.count().catch(() => 0),
+          DEFERRED_IMAGE_UPLOAD_STEP_TIMEOUT_MS,
+          0,
+          `Count image file inputs for ${selector}`
+        ),
+        10
+      );
       for (let i = 0; i < count; i += 1) {
-        const baseline = await this.getEditorState(token);
+        const baseline = await this.withTimeout(
+          this.getEditorState(token),
+          DEFERRED_IMAGE_UPLOAD_STEP_TIMEOUT_MS,
+          { hasToken: true, imageCount: 0 },
+          'Read editor state before deferred image upload'
+        );
         if (!baseline.hasToken) {
           return true;
         }
 
         try {
-          await inputs.nth(i).setInputFiles(filePath, { timeout: 5000 });
-          await this.authenticatedPage.waitForTimeout(MERMAID_UPLOAD_INPUT_SETTLE_MS);
+          await this.withTimeout(
+            inputs.nth(i).setInputFiles(filePath, { timeout: 3000 }),
+            DEFERRED_IMAGE_UPLOAD_STEP_TIMEOUT_MS,
+            undefined,
+            `Set deferred image file input ${selector} [${i}]`
+          );
+          await this.withTimeout(
+            this.authenticatedPage.waitForTimeout(MERMAID_UPLOAD_INPUT_SETTLE_MS),
+            DEFERRED_IMAGE_UPLOAD_STEP_TIMEOUT_MS,
+            undefined,
+            'Wait after deferred image file input'
+          );
         } catch {
           continue;
         }
 
-        const uploaded = await this.waitForMermaidUploadResult(token, baseline.imageCount);
+        const uploaded = await this.withTimeout(
+          this.waitForMermaidUploadResult(token, baseline.imageCount),
+          DEFERRED_IMAGE_UPLOAD_STEP_TIMEOUT_MS,
+          false,
+          'Wait for deferred image upload result'
+        );
         if (uploaded) {
-          this.log(`[DEBUG] Mermaid image uploaded via ${selector} [${i}]`);
+          this.log(`[DEBUG] Deferred image uploaded via ${selector} [${i}]`);
           return true;
         }
       }
@@ -1419,11 +1823,11 @@ export class PlaywrightService {
         fs.unlinkSync(filePath);
       }
     } catch (error) {
-      this.log(`Failed to remove Mermaid temp file ${filePath}: ${error}`, 'warn');
+      this.log(`Failed to remove temp image file ${filePath}: ${error}`, 'warn');
     }
   }
 
-  private async uploadDeferredMermaidImages(tasks: MermaidUploadTask[]): Promise<void> {
+  private async uploadDeferredImages(tasks: DeferredImageUploadTask[]): Promise<void> {
     if (!this.authenticatedPage || tasks.length === 0) {
       return;
     }
@@ -1431,27 +1835,50 @@ export class PlaywrightService {
     for (let i = 0; i < tasks.length; i += 1) {
       const task = tasks[i];
       try {
-        const hasToken = await this.getEditorState(task.token);
+        this.log(`[DEBUG] Deferred image task ${i + 1}/${tasks.length} (${task.label}) start`);
+        const hasToken = await this.withTimeout(
+          this.getEditorState(task.token),
+          DEFERRED_IMAGE_UPLOAD_STEP_TIMEOUT_MS,
+          { hasToken: true, imageCount: 0 },
+          `${task.label} get editor state`
+        );
         if (!hasToken.hasToken) {
-          this.log(`[DEBUG] Mermaid upload token missing before upload, skip task ${i + 1}`, 'warn');
+          this.log(`[DEBUG] ${task.label} upload token missing before upload, fallback to inline image for task ${i + 1}`, 'warn');
+          await this.replaceTokenWithInlineImage(task) || await this.replaceTokenInEditor(task.token, task.fallbackText);
           continue;
         }
 
-        const focused = await this.focusEditorAtToken(task.token);
+        const focused = await this.withTimeout(
+          this.focusEditorAtToken(task.token),
+          DEFERRED_IMAGE_UPLOAD_STEP_TIMEOUT_MS,
+          false,
+          `${task.label} focus editor token`
+        );
         if (!focused) {
-          this.log(`[DEBUG] Failed to focus Mermaid token, fallback to text for task ${i + 1}`, 'warn');
-          await this.replaceTokenInEditor(task.token, task.fallbackText);
+          this.log(`[DEBUG] Failed to focus ${task.label} token, fallback to inline image for task ${i + 1}`, 'warn');
+          await this.replaceTokenWithInlineImage(task) || await this.replaceTokenInEditor(task.token, task.fallbackText);
           continue;
         }
 
-        const uploaded = await this.tryUploadImageAtCursor(task.filePath, task.token);
+        const uploaded = await this.withTimeout(
+          this.tryUploadImageAtCursor(task.filePath, task.token),
+          DEFERRED_IMAGE_UPLOAD_STEP_TIMEOUT_MS,
+          false,
+          `${task.label} upload image at cursor`
+        );
         if (!uploaded) {
-          this.log(`[DEBUG] Mermaid image upload failed, fallback to text for task ${i + 1}`, 'warn');
-          await this.replaceTokenInEditor(task.token, task.fallbackText);
+          this.log(`[DEBUG] ${task.label} image upload failed, fallback to inline image for task ${i + 1}`, 'warn');
+          await this.replaceTokenWithInlineImage(task) || await this.replaceTokenInEditor(task.token, task.fallbackText);
           continue;
         }
 
         await this.replaceTokenInEditor(task.token, '');
+      } catch (error) {
+        this.log(
+          `[DEBUG] ${task.label} image upload task failed, fallback to inline image for task ${i + 1}: ${error}`,
+          'warn'
+        );
+        await this.replaceTokenWithInlineImage(task) || await this.replaceTokenInEditor(task.token, task.fallbackText);
       } finally {
         this.removeTempFile(task.filePath);
       }
@@ -1481,8 +1908,8 @@ export class PlaywrightService {
       }, html);
 
       if (tasks.length > 0) {
-        this.log(`[DEBUG] Uploading ${tasks.length} Mermaid image(s) to editor`);
-        await this.uploadDeferredMermaidImages(tasks);
+        this.log(`[DEBUG] Uploading ${tasks.length} deferred image(s) to editor`);
+        await this.uploadDeferredImages(tasks);
       }
     } catch (error) {
       tasks.forEach((task) => this.removeTempFile(task.filePath));
@@ -2604,23 +3031,51 @@ export class PlaywrightService {
         await collectionInput.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
         await collectionInput.click();
 
+        let collectionFound = false;
         try {
+          // Type the collection name into the search input to trigger dropdown filtering.
+          await collectionInput.fill(defaultCollection);
+          await this.waitForUiSettled(this.authenticatedPage);
+
           // Prefer exact match by collection name when it exists.
           const targetCollection = collectionDialog.getByText(defaultCollection, { exact: true }).first();
           await targetCollection.waitFor({ state: 'visible', timeout: 2500 });
           await targetCollection.click();
+          collectionFound = true;
         } catch (selectByNameError) {
-          // Fallback: select the first dropdown option.
-          this.log(`[DEBUG] Collection "${defaultCollection}" not found, selecting first option: ${selectByNameError}`, 'warn');
-          await collectionInput.press('ArrowDown');
-          await collectionInput.press('Enter');
+          // Fallback: clear the input and pick the first visible dropdown option.
+          this.log(`[DEBUG] Collection "${defaultCollection}" not found via search, trying first available option: ${selectByNameError}`, 'warn');
+
+          try {
+            await collectionInput.fill('');
+            await this.waitForUiSettled(this.authenticatedPage);
+
+            // Attempt to click the first visible option item in the dropdown.
+            const firstOption = collectionDialog
+              .locator('.weui-desktop-dropdown__list-item, .dropdown-item, [role="option"], li')
+              .first();
+            await firstOption.waitFor({ state: 'visible', timeout: 3000 });
+            await firstOption.click();
+            collectionFound = true;
+          } catch (firstOptionError) {
+            // Last resort: keyboard navigation on the input.
+            this.log(`[DEBUG] No dropdown option visible, trying keyboard navigation: ${firstOptionError}`, 'warn');
+            await collectionInput.press('ArrowDown');
+            await this.waitForUiSettled(this.authenticatedPage);
+            await collectionInput.press('Enter');
+          }
         }
 
         const collectionConfirmButton = collectionDialog.getByRole('button', { name: '确认' }).first();
         await collectionConfirmButton.waitFor({ state: 'visible', timeout: DIALOG_TIMEOUT_MS });
         await collectionConfirmButton.click();
         await this.waitForDialogClose(collectionDialog, '合集');
-        this.log(`[DEBUG] Collection set: ${defaultCollection}`);
+
+        if (collectionFound) {
+          this.log(`[DEBUG] Collection set: ${defaultCollection}`);
+        } else {
+          this.log(`[WARN] Collection "${defaultCollection}" was not available; saved without collection association`, 'warn');
+        }
       }
 
       // Step 21: Save as draft or publish (following test.py logic)

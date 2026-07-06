@@ -10,7 +10,8 @@
 ## ✨ Features
 
 - ✅ **Full Markdown / GFM Support** - Complete Markdown and GitHub Flavored Markdown support
-- ✅ **Mermaid Diagram Rendering** - Automatic rendering and upload of Mermaid diagrams
+- ✅ **Mermaid Diagram Rendering** - Automatic Mermaid rendering as WeChat-editor-compatible PNG images
+- ✅ **Inline SVG Rendering** - Render raw `<svg>` and `<figure><svg>...</svg></figure>` blocks as PNG images
 - ✅ **Code Highlighting** - Beautiful syntax highlighting using highlight.js
 - ✅ **Content Style Customization** - Theme presets (classic, magazine, minimal) with customizable colors and fonts
 - ✅ **Persistent Login State** - Login session persists across VSCode restarts, no need to scan QR every time
@@ -40,7 +41,7 @@ All commands are prefixed with `WeChatPost: ` in the command palette.
 3. Type `WeChatPost: Publish Current Markdown to WeChat` and execute
 4. **If not logged in**: Chrome will open automatically, scan QR code to login, save credentials, and upload
 5. **If already logged in**: Directly create draft in browser (login state persists across restarts)
-6. Mermaid diagrams are automatically rendered to images and uploaded to WeChat CDN
+6. Mermaid diagrams and inline SVG blocks are automatically rendered as PNG images for the WeChat editor
 
 ### Method 2: Manual Cookie Mode
 
@@ -81,7 +82,7 @@ Search for `wechatPublisher` in VSCode settings or use `WeChatPost: Configure Pu
 ## 📝 Notes
 
 - This plugin uses cookie authentication from WeChat Official Accounts web interface, no developer资质 required
-- Mermaid diagrams are rendered as PNG images and uploaded to WeChat CDN
+- Mermaid diagrams and inline SVG blocks are rendered as PNG images before insertion, avoiding SVG filtering by the WeChat editor
 - All external images are automatically uploaded to WeChat CDN
 - Authentication information is securely stored in VSCode secret storage, never stored in plain text
 

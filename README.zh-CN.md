@@ -10,7 +10,8 @@
 ## ✨ 功能特性
 
 - ✅ **完整 Markdown 支持** - 完全支持 Markdown 和 GitHub Flavored Markdown
-- ✅ **Mermaid 图表渲染** - 自动渲染和上传 Mermaid 图表
+- ✅ **Mermaid 图表渲染** - 自动渲染为微信公众号编辑器兼容的 PNG 图片
+- ✅ **内嵌 SVG 渲染** - 支持将原始 `<svg>` 和 `<figure><svg>...</svg></figure>` 渲染为 PNG 图片
 - ✅ **代码高亮** - 使用 highlight.js 实现美观的语法高亮
 - ✅ **微信样式主题** - 默认微信公众号风格主题
 - ✅ **扫码登录** - 手机扫码登录（无需开发者资质/AppID）
@@ -32,14 +33,14 @@
 
 所有命令都以 `WeChatPost: ` 前缀显示在命令面板中。
 
-### 方式一：CDP 全自动（推荐）
+### 方式一：Playwright 自动化（推荐）
 
 1. 打开 `.md` Markdown 文件
 2. 打开命令面板（`Cmd+Shift+P` / `Ctrl+Shift+P`）
 3. 输入 `WeChatPost: Publish Current Markdown to WeChat` 执行
 4. **未登录时**：会自动打开 Chrome，扫码登录后自动保存凭据并上传
 5. **已登录时**：直接在浏览器中创建草稿
-6. Mermaid 图表会自动渲染为图片并上传到微信 CDN
+6. Mermaid 图表和内嵌 SVG 会自动渲染为微信公众号编辑器兼容的 PNG 图片
 
 ### 方式二：手动 Cookie 模式
 
@@ -73,7 +74,7 @@
 ## 📝 注意事项
 
 - 本插件使用微信公众号网页版的 Cookie 认证方式，不需要公众号开发者资质
-- Mermaid 图表会被渲染为 PNG 图片上传到微信 CDN
+- Mermaid 图表和内嵌 SVG 会先渲染为 PNG 图片，避免被微信公众号编辑器过滤
 - 所有外部图片都会自动上传到微信 CDN
 - 认证信息安全保存在 VSCode 密钥存储中，不会明文存储
 
