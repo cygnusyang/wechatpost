@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.3.7 (2026-07-19)
+
+- 🐛 **Fix**: Restore deferred image upload for Mermaid diagrams and inline SVG blocks — data URL images now properly upload to WeChat CDN via editor file input instead of being embedded as non-rendering base64 data in the editor.
+- 🔧 **Chore**: Version bump to 1.3.7
+
 ## 1.3.6 (2026-07-06)
 
 - 🐛 **Fix**: Render inline `<svg>` and `<figure><svg>...</svg></figure>` blocks as PNG images so SVG diagrams appear in WeChat article content.
