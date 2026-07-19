@@ -1456,11 +1456,25 @@ export class PlaywrightService {
       const fallbackText = `<pre><code class="language-mermaid">${this.markdownParser.utils.escapeHtml(diagramCode)}</code></pre>`;
 
       let replacement = fallbackText;
-      if (dataUrl && this.isWechatArticleImageDataUrlWithinLimit(dataUrl)) {
-        replacement = `<p><img src="${dataUrl}" alt="Mermaid Diagram ${i + 1}" style="max-width: 100%;" /></p>`;
-        this.log(`[DEBUG] Mermaid diagram ${i + 1} rendered as inline PNG`);
-      } else if (dataUrl) {
-        this.log(`[DEBUG] Mermaid diagram ${i + 1} inline PNG exceeds WeChat limit, fallback to code block`, 'warn');
+      if (dataUrl) {
+        // Write rendered PNG to temp file and queue for deferred upload via WeChat editor's file input.
+        // Direct data:image/png;base64 URLs do NOT render in WeChat's MP editor, so we must upload
+        // each image to WeChat CDN first, then replace the placeholder token with the real URL.
+        const filePath = await this.writeDataUrlToTempPng(dataUrl, i);
+        if (filePath) {
+          const uploadToken = `MP_MERMAID_UPLOAD_TOKEN_${i}_${Date.now()}`;
+          replacement = `<p>${uploadToken}</p>`;
+          tasks.push({
+            token: uploadToken,
+            filePath,
+            fallbackText,
+            label: `Mermaid Diagram ${i + 1}`,
+            dataUrl,
+          });
+          this.log(`[DEBUG] Mermaid diagram ${i + 1} queued for deferred upload`);
+        } else {
+          this.log(`[DEBUG] Mermaid diagram ${i + 1} temp file write failed, fallback to code block`, 'warn');
+        }
       } else {
         this.log(`[DEBUG] Mermaid diagram ${i + 1} fallback to code block`, 'warn');
       }
@@ -1473,14 +1487,26 @@ export class PlaywrightService {
     for (let i = 0; i < svgExtraction.blocks.length; i += 1) {
       const token = `MP_INLINE_SVG_PLACEHOLDER_${i}`;
       const dataUrl = await this.renderSvgMarkupToPngDataUrl(svgExtraction.blocks[i]);
-      const fallbackText = '[SVG 图]';
-      let replacement = `<pre><code>${this.markdownParser.utils.escapeHtml(svgExtraction.blocks[i])}</code></pre>`;
+      const fallbackText = `<pre><code>${this.markdownParser.utils.escapeHtml(svgExtraction.blocks[i])}</code></pre>`;
+      let replacement = fallbackText;
 
-      if (dataUrl && this.isWechatArticleImageDataUrlWithinLimit(dataUrl)) {
-        replacement = `<p><img src="${dataUrl}" alt="Inline SVG ${i + 1}" style="max-width: 100%;" /></p>`;
-        this.log(`[DEBUG] Inline SVG ${i + 1} rendered as inline PNG`);
-      } else if (dataUrl) {
-        this.log(`[DEBUG] Inline SVG ${i + 1} inline PNG exceeds WeChat limit, fallback to code block`, 'warn');
+      if (dataUrl) {
+        // Queued for deferred upload just like Mermaid blocks — data URLs cannot render in WeChat editor.
+        const filePath = await this.writeDataUrlToTempPng(dataUrl, i);
+        if (filePath) {
+          const uploadToken = `MP_SVG_UPLOAD_TOKEN_${i}_${Date.now()}`;
+          replacement = `<p>${uploadToken}</p>`;
+          tasks.push({
+            token: uploadToken,
+            filePath,
+            fallbackText,
+            label: `Inline SVG ${i + 1}`,
+            dataUrl,
+          });
+          this.log(`[DEBUG] Inline SVG ${i + 1} queued for deferred upload`);
+        } else {
+          this.log(`[DEBUG] Inline SVG ${i + 1} temp file write failed, fallback to code block`, 'warn');
+        }
       } else {
         this.log(`[DEBUG] Inline SVG ${i + 1} fallback to code block`, 'warn');
       }
