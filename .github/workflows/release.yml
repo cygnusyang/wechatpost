@@ -16,7 +16,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 按你的项目实际情况替换
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -33,6 +32,9 @@ jobs:
 
       - name: Package extension
         run: npx vsce package
+
+      - name: Publish to VS Code Marketplace
+        run: npx vsce publish --packagePath wechatpost-${{ steps.changelog.outputs.version }}.vsix -p ${{ secrets.VSCE_PAT }}
 
       - name: Extract changelog for version
         id: changelog
