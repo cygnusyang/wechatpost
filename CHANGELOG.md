@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.3.8 (2026-07-27)
+
+- ✨ **Feature**: Automatically resolve local file references in Markdown (`![alt](path)` and `<img src="path">`). SVG files are inlined and rendered as PNG via the existing SVG pipeline; raster images (PNG/JPG/GIF/WebP) are uploaded to WeChat CDN via deferred upload.
+
 ## 1.3.7 (2026-07-19)
 
 - 🐛 **Fix**: Restore deferred image upload for Mermaid diagrams and inline SVG blocks — data URL images now properly upload to WeChat CDN via editor file input instead of being embedded as non-rendering base64 data in the editor.
