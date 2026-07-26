@@ -81,7 +81,7 @@ export async function activate(context: vscode.ExtensionContext) {
             cancellable: false,
           },
           async (progress) => {
-            await handlePlaywrightFullAutomatedUpload(markdown, title, progress);
+            await handlePlaywrightFullAutomatedUpload(markdown, title, fileName, progress);
           }
         );
       }
@@ -222,7 +222,7 @@ async function previewCurrentDocument(): Promise<void> {
   const title = extractTitle(markdown) || fileName.split('/').pop()?.replace(/\.md$/, '') || 'Untitled';
   const settings = settingsService.getSettings();
 
-  const renderedHtml = await playwrightService.renderMarkdownPreview(markdown, settings.contentStyle);
+  const renderedHtml = await playwrightService.renderMarkdownPreview(markdown, settings.contentStyle, fileName);
   const panel = vscode.window.createWebviewPanel(
     'wechatpostPreview',
     `WeChatPost Preview: ${title}`,
@@ -429,6 +429,7 @@ async function configurePublishOptions(): Promise<void> {
 async function handlePlaywrightFullAutomatedUpload(
   markdown: string,
   title: string,
+  fileName: string,
   progress: vscode.Progress<{ message?: string }>
 ): Promise<void> {
   try {
@@ -459,7 +460,8 @@ async function handlePlaywrightFullAutomatedUpload(
       publishSettings.enableAppreciation,
       publishSettings.defaultCollection,
       publishSettings.publishDirectly,
-      publishSettings.contentStyle
+      publishSettings.contentStyle,
+      fileName // 源文件路径，用于解析相对路径的图片引用
     );
 
     const successMessage = publishSettings.publishDirectly
