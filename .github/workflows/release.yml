@@ -33,9 +33,6 @@ jobs:
       - name: Package extension
         run: npx vsce package
 
-      - name: Publish to VS Code Marketplace
-        run: npx vsce publish --packagePath wechatpost-${{ steps.changelog.outputs.version }}.vsix -p ${{ secrets.VSCE_PAT }}
-
       - name: Extract changelog for version
         id: changelog
         run: |
@@ -67,6 +64,9 @@ jobs:
           echo "content<<EOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Publish to VS Code Marketplace
+        run: npx vsce publish --packagePath wechatpost-${{ steps.changelog.outputs.version }}.vsix --skip-duplicate -p ${{ secrets.VSCE_PAT }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
