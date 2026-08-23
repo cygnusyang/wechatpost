@@ -466,9 +466,10 @@ describe('PlaywrightService', () => {
       contentStyle
     );
 
-    expect(result.tasks).toHaveLength(0);
-    expect(result.html).toContain('data:image/png;base64,AAAA');
-    expect(result.html).not.toContain('MP_MERMAID_UPLOAD_TOKEN_0_');
+    expect(result.tasks).toHaveLength(1);
+    expect(result.tasks[0].label).toContain('Mermaid Diagram 1');
+    expect(result.tasks[0].dataUrl).toBe('data:image/png;base64,AAAA');
+    expect(result.html).toContain('MP_MERMAID_UPLOAD_TOKEN_0_');
     expect(result.html).not.toContain('MP_MERMAID_PLACEHOLDER_0');
   });
 
@@ -510,9 +511,10 @@ describe('PlaywrightService', () => {
       contentStyle
     );
 
-    expect(result.tasks).toHaveLength(0);
-    expect(result.html).toContain('data:image/png;base64,SVGPNG');
-    expect(result.html).not.toContain('MP_INLINE_SVG_UPLOAD_TOKEN_0_');
+    expect(result.tasks).toHaveLength(1);
+    expect(result.tasks[0].label).toContain('Inline SVG 1');
+    expect(result.tasks[0].dataUrl).toBe('data:image/png;base64,SVGPNG');
+    expect(result.html).toContain('MP_SVG_UPLOAD_TOKEN_0_');
     expect(result.html).not.toContain('MP_INLINE_SVG_PLACEHOLDER_0');
   });
 

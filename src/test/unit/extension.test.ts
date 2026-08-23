@@ -123,7 +123,8 @@ describe('extension', () => {
         textColor: '#1f2329',
         headingColor: '#0f172a',
         linkColor: '#0969da',
-      }
+      },
+      '/tmp/demo.md'
     );
     expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(1);
   });
@@ -165,7 +166,8 @@ describe('extension', () => {
         textColor: '#1f2329',
         headingColor: '#0f172a',
         linkColor: '#0969da',
-      }
+      },
+      '/tmp/demo.md'
     );
   });
 

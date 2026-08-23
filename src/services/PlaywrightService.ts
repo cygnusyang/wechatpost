@@ -776,6 +776,173 @@ export class PlaywrightService {
     return ((fenceMatches?.length ?? 0) % 2) === 1;
   }
 
+  /**
+   * Preprocess raw markdown to resolve local file references before markdown-it rendering.
+   *
+   * Handles two patterns (on raw markdown text):
+   *   - Markdown image syntax: ![alt](path)
+   *   - HTML <img src="path"> tags
+   *
+   * For SVG files → inlines the SVG markup wrapped in `<figure>`, so the existing
+   * `extractInlineSvgBlocks` renders it to PNG and uploads to WeChat CDN.
+   *
+   * For raster images (PNG/JPG/GIF/WebP):
+   *   - uploadMode=true (upload path): copies to temp file and queues a deferred
+   *     upload task (same mechanism as Mermaid/SVG rendered PNGs).
+   *   - uploadMode=false (preview path): inlines a data: URL directly.
+   *
+   * Remote URLs (https://, data:) are left untouched.
+   */
+  private preprocessLocalFileRefs(
+    markdown: string,
+    sourceDir: string | undefined,
+    uploadMode: boolean
+  ): { markdown: string; tasks: DeferredImageUploadTask[] } {
+    const tasks: DeferredImageUploadTask[] = [];
+
+    if (!sourceDir) {
+      this.log(`[DEBUG] preprocessLocalFileRefs: sourceDir is undefined, skipping`);
+      return { markdown, tasks };
+    }
+
+    this.log(`[DEBUG] preprocessLocalFileRefs: scanning markdown for local file refs (sourceDir=${sourceDir}, uploadMode=${uploadMode})`);
+
+    // 1. Process Markdown image syntax: ![alt](path)
+    let mdRefCount = 0;
+    const replaceMdImage = (match: string, alt: string, relPath: string): string => {
+      mdRefCount += 1;
+      const replacement = this.handleSingleImageRef(relPath, alt, sourceDir, uploadMode, tasks);
+      if (replacement) {
+        this.log(`[DEBUG] preprocessLocalFileRefs: resolved Markdown image ref #${mdRefCount}: ${relPath} → ${replacement.slice(0, 80)}...`);
+      } else {
+        this.log(`[DEBUG] preprocessLocalFileRefs: SKIPPED Markdown image ref #${mdRefCount}: ${relPath} (file not found or unsupported)`);
+      }
+      return replacement ?? match;
+    };
+    let result = markdown.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, replaceMdImage);
+    this.log(`[DEBUG] preprocessLocalFileRefs: found ${mdRefCount} Markdown image reference(s)`);
+
+    // 2. Process HTML <img> tags (those not already handled by markdown syntax above)
+    let htmlRefCount = 0;
+    const replaceHtmlImg = (match: string, attrs: string): string => {
+      const srcMatch = attrs.match(/src\s*=\s*"([^"]+)"/i);
+      if (!srcMatch) {
+        return match;
+      }
+      const relPath = srcMatch[1];
+      // Skip data: and https: URLs
+      if (/^(https?:|data:)/i.test(relPath)) {
+        return match;
+      }
+      htmlRefCount += 1;
+      const altMatch = attrs.match(/alt\s*=\s*"([^"]*)"/i);
+      const alt = altMatch ? altMatch[1] : '';
+      const replacement = this.handleSingleImageRef(relPath, alt, sourceDir, uploadMode, tasks);
+      if (replacement) {
+        this.log(`[DEBUG] preprocessLocalFileRefs: resolved HTML img ref #${htmlRefCount}: ${relPath}`);
+      } else {
+        this.log(`[DEBUG] preprocessLocalFileRefs: SKIPPED HTML img ref #${htmlRefCount}: ${relPath}`);
+      }
+      return replacement ?? match;
+    };
+    result = result.replace(/<img\s+([^>]*?)\/?>/gi, replaceHtmlImg);
+
+    return { markdown: result, tasks };
+  }
+
+  /**
+   * Resolve a single local image reference: resolve path, read file, and return
+   * replacement markup (or null to leave the original untouched).
+   *
+   * SVG files are inlined; raster files are either queued for deferred upload
+   * (uploadMode=true) or inlined as data URLs (uploadMode=false).
+   */
+  private handleSingleImageRef(
+    relPath: string,
+    alt: string,
+    sourceDir: string,
+    uploadMode: boolean,
+    tasks: DeferredImageUploadTask[]
+  ): string | null {
+    // Skip remote URLs and data URIs
+    if (/^(https?:|data:)/i.test(relPath)) {
+      return null;
+    }
+
+    // Resolve relative path against the markdown file's directory
+    const absolutePath = path.resolve(sourceDir, relPath);
+    const ext = path.extname(absolutePath).toLowerCase();
+
+    // Check file exists
+    if (!fs.existsSync(absolutePath)) {
+      this.log(`[DEBUG] handleSingleImageRef: file not found: ${absolutePath}`);
+      return null;
+    }
+
+    this.log(`[DEBUG] handleSingleImageRef: resolved ${relPath} → ${absolutePath} (ext=${ext})`);
+
+    // ── SVG: inline the raw content so extractInlineSvgBlocks can pick it up ──
+    //
+    // IMPORTANT: Do NOT wrap in <figure> here — the user's original markdown may
+    // already have a <figure> wrapper. Adding another one creates nested <figure>
+    // elements which break extractInlineSvgBlocks's regex matching.
+    // extractInlineSvgBlocks handles both <figure><svg>…</svg></figure> and bare
+    // <svg>…</svg> patterns, so inlining the raw SVG is safe either way.
+    if (ext === '.svg') {
+      try {
+        return fs.readFileSync(absolutePath, 'utf-8');
+      } catch {
+        return null;
+      }
+    }
+
+    // ── Raster images: upload or inline as data URL ──
+    const rasterExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
+    if (rasterExts.includes(ext)) {
+      try {
+        const buffer = fs.readFileSync(absolutePath);
+
+        if (buffer.length > WECHAT_ARTICLE_IMAGE_MAX_BYTES) {
+          return null; // too large, leave as-is (will show broken in editor)
+        }
+
+        const mimeType = ext === '.jpg' ? 'image/jpeg' : `image/${ext.slice(1)}`;
+        const dataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`;
+
+        if (uploadMode) {
+          // Write to temp file and queue for deferred upload via WeChat editor
+          const safeExt = ext === '.jpeg' ? '.jpg' : ext;
+          const tempFileName = [
+            'wechatpost-local-image',
+            `${Date.now()}`,
+            `${tasks.length}`,
+            `${Math.random().toString(36).slice(2, 8)}${safeExt}`,
+          ].join('-');
+          const tempFilePath = path.join(os.tmpdir(), tempFileName);
+          fs.writeFileSync(tempFilePath, buffer);
+
+          const uploadToken = `MP_LOCAL_IMAGE_UPLOAD_TOKEN_${tasks.length}_${Date.now()}`;
+
+          tasks.push({
+            token: uploadToken,
+            filePath: tempFilePath,
+            fallbackText: `<img src="${dataUrl}" alt="${alt}" style="max-width:100%;height:auto;" />`,
+            label: `Local Image ${tasks.length + 1} (${path.basename(absolutePath)})`,
+            dataUrl,
+          });
+
+          return `<p>${uploadToken}</p>`;
+        }
+        // Preview mode: inline data URL directly
+        return `<img src="${dataUrl}" alt="${alt}" style="max-width:100%;height:auto;" />`;
+      } catch {
+        return null;
+      }
+    }
+
+    return null; // unsupported file type
+  }
+
   private async renderSvgMarkupToPngDataUrl(svgMarkup: string): Promise<string | null> {
     let renderBrowser: Browser | null = null;
     let renderPage: Page | null = null;
@@ -1362,9 +1529,12 @@ export class PlaywrightService {
       .trim();
   }
 
-  private async renderMarkdownToWechatHtml(markdown: string, style: ContentStyleSettings): Promise<string> {
+  private async renderMarkdownToWechatHtml(markdown: string, style: ContentStyleSettings, sourceDir?: string): Promise<string> {
+    // Resolve local file references (SVG → inline for further processing; raster → data URL)
+    const { markdown: resolvedMarkdown } = this.preprocessLocalFileRefs(markdown, sourceDir, false);
+
     const mermaidBlocks: string[] = [];
-    const markdownWithPlaceholders = markdown.replace(/```mermaid\s*([\s\S]*?)```/g, (_match, mermaidCode: string) => {
+    const markdownWithPlaceholders = resolvedMarkdown.replace(/```mermaid\s*([\s\S]*?)```/g, (_match, mermaidCode: string) => {
       const token = `MP_MERMAID_PLACEHOLDER_${mermaidBlocks.length}`;
       mermaidBlocks.push(mermaidCode.trim());
       return token;
@@ -1435,10 +1605,18 @@ export class PlaywrightService {
 
   private async renderMarkdownToWechatHtmlWithUploadPlan(
     markdown: string,
-    style: ContentStyleSettings
+    style: ContentStyleSettings,
+    sourceDir?: string
   ): Promise<{ html: string; tasks: DeferredImageUploadTask[] }> {
+    // Resolve local file references (SVG → inline; raster → upload queue)
+    // Must run BEFORE mermaid/SVG extraction so inlined SVGs get picked up.
+    const localRefs = this.preprocessLocalFileRefs(markdown, sourceDir, true);
+    if (localRefs.tasks.length > 0) {
+      this.log(`[DEBUG] Preprocessed ${localRefs.tasks.length} local file reference(s) for deferred upload`);
+    }
+
     const mermaidBlocks: string[] = [];
-    const markdownWithPlaceholders = markdown.replace(/```mermaid\s*([\s\S]*?)```/g, (_match, mermaidCode: string) => {
+    const markdownWithPlaceholders = localRefs.markdown.replace(/```mermaid\s*([\s\S]*?)```/g, (_match, mermaidCode: string) => {
       const token = `MP_MERMAID_PLACEHOLDER_${mermaidBlocks.length}`;
       mermaidBlocks.push(mermaidCode.trim());
       return token;
@@ -1446,7 +1624,7 @@ export class PlaywrightService {
     const svgExtraction = this.extractInlineSvgBlocks(markdownWithPlaceholders);
 
     let html = this.markdownParser.render(svgExtraction.markdown);
-    const tasks: DeferredImageUploadTask[] = [];
+    const tasks: DeferredImageUploadTask[] = [...localRefs.tasks];
 
     for (let i = 0; i < mermaidBlocks.length; i += 1) {
       const token = `MP_MERMAID_PLACEHOLDER_${i}`;
@@ -1911,12 +2089,12 @@ export class PlaywrightService {
     }
   }
 
-  private async fillBodyWithFormattedMarkdown(markdown: string, style: ContentStyleSettings): Promise<void> {
+  private async fillBodyWithFormattedMarkdown(markdown: string, style: ContentStyleSettings, sourceDir?: string): Promise<void> {
     if (!this.authenticatedPage) {
       throw new Error('No authenticated page available.');
     }
 
-    const { html, tasks } = await this.renderMarkdownToWechatHtmlWithUploadPlan(markdown, style);
+    const { html, tasks } = await this.renderMarkdownToWechatHtmlWithUploadPlan(markdown, style, sourceDir);
 
     try {
       await this.authenticatedPage.evaluate((renderedHtml) => {
@@ -1952,9 +2130,10 @@ export class PlaywrightService {
    * Render markdown to themed HTML for local preview in VS Code webview.
    * Mermaid blocks will fallback to code blocks when no authenticated page is available.
    */
-  async renderMarkdownPreview(markdown: string, style: ContentStyleSettings): Promise<string> {
+  async renderMarkdownPreview(markdown: string, style: ContentStyleSettings, sourceFilePath?: string): Promise<string> {
+    const sourceDir = sourceFilePath ? path.dirname(sourceFilePath) : undefined;
     const bodyMarkdown = this.stripLeadingTopLevelHeading(markdown);
-    return this.renderMarkdownToWechatHtml(bodyMarkdown, style);
+    return this.renderMarkdownToWechatHtml(bodyMarkdown, style, sourceDir);
   }
 
   /**
@@ -2750,12 +2929,17 @@ export class PlaywrightService {
       textColor: '#1f2329',
       headingColor: '#0f172a',
       linkColor: '#0969da',
-    }
+    },
+    sourceFilePath?: string
   ): Promise<string> {
     let page = this.getActiveSessionPage();
     this.setAuthenticatedPage(page);
     if (!this.context || !this.authenticatedPage) {
       throw new Error('No authenticated browser session. Please login first.');
+    }
+    const sourceDir = sourceFilePath ? path.dirname(sourceFilePath) : undefined;
+    if (sourceDir) {
+      this.log(`[DEBUG] Source file directory for relative image resolution: ${sourceDir}`);
     }
     this.log(`[DEBUG] Starting draft creation following test.py logic`);
     this.log(`[DEBUG] Title: "${title}", Author: "${author}", Content length: ${content.length}`);
@@ -2831,7 +3015,7 @@ export class PlaywrightService {
       if (bodyContent !== withoutFrontmatter) {
         this.log('[DEBUG] Removed leading H1 from body markdown before upload');
       }
-      await this.fillBodyWithFormattedMarkdown(bodyContent, contentStyle);
+      await this.fillBodyWithFormattedMarkdown(bodyContent, contentStyle, sourceDir);
       this.log(`[DEBUG] Formatted content filled, body markdown length: ${bodyContent.length}`);
 
       // Step 10: Click article settings (following test.py logic)
